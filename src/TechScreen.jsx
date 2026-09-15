@@ -1,12 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import { FiTool, FiLogOut, FiBox, FiRefreshCw, FiLayers, FiShoppingCart, FiX, FiUser, FiPhone, FiCheckCircle } from 'react-icons/fi';
+import { FiTool, FiLogOut, FiBox, FiRefreshCw, FiLayers, FiShoppingCart, FiX, FiUser, FiPhone, FiCheckCircle, FiWifiOff, FiUploadCloud } from 'react-icons/fi';
+import { openDB } from 'idb'; // مكتبة التخزين المحلي
+
+// إعداد قاعدة البيانات المحلية للأوفلاين
+const initDB = async () => {
+  return openDB('FlyTechOfflineDB', 1, {
+    upgrade(db) {
+      if (!db.objectStoreNames.contains('offline_sales')) {
+        db.createObjectStore('offline_sales', { keyPath: 'id', autoIncrement: true });
+      }
+    },
+  });
+};
 
 export default function TechScreen({ user, onLogout }) {
   const [myItems, setMyItems] = useState([]);
   const [mainItems, setMainItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
+  
+  // حالات الأوفلاين
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingSync, setPendingSync] = useState(0);
 
   const [isDispenseModalOpen, setIsDispenseModalOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
@@ -16,6 +32,81 @@ export default function TechScreen({ user, onLogout }) {
   const [itemPrice, setItemPrice] = useState('');
   const [isFree, setIsFree] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // 🌟 استرجاع العمليات المعلقة من الذاكرة المحلية
+  const checkPendingSync = async () => {
+    const db = await initDB();
+    const allPending = await db.getAll('offline_sales');
+    setPendingSync(allPending.length);
+  };
+
+  // 🌟 المزامنة التلقائية عند عودة الإنترنت
+  const syncOfflineData = async () => {
+    if (!navigator.onLine) return;
+    
+    const db = await initDB();
+    const allPending = await db.getAll('offline_sales');
+    
+    if (allPending.length === 0) return;
+
+    for (const record of allPending) {
+      try {
+        // تنفيذ عملية البيع التي كانت معلقة
+        const { data: rows } = await supabase
+          .from('inventory_techs')
+          .select('*')
+          .eq('techUsername', user.username)
+          .eq('itemId', record.selectedItemId);
+
+        let remainingToDeduct = record.qtyToSell;
+        for (let row of rows) {
+          if (remainingToDeduct <= 0) break;
+          if (Number(row.quantity) <= remainingToDeduct) {
+            await supabase.from('inventory_techs').delete().eq('id', row.id);
+            remainingToDeduct -= Number(row.quantity);
+          } else {
+            await supabase.from('inventory_techs').update({ quantity: Number(row.quantity) - remainingToDeduct }).eq('id', row.id);
+            remainingToDeduct = 0;
+          }
+        }
+
+        await supabase.from('safe_manual_entries').insert([{
+          amount: record.totalAmount,
+          date: record.todayDate,
+          note: record.noteStr,
+          is_paid: true,
+          created_by: user.username
+        }]);
+
+        // مسح العملية من الذاكرة المحلية بعد نجاح الإرسال
+        await db.delete('offline_sales', record.id);
+      } catch (err) {
+        console.error("فشل في مزامنة أحد القيود:", err);
+      }
+    }
+    
+    checkPendingSync();
+    fetchMyItems(true); // جلب البيانات المحدثة
+  };
+
+  // مراقبة حالة الاتصال بالإنترنت
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      syncOfflineData(); // مزامنة فورية عند عودة النت
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    checkPendingSync();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const fetchMyItems = async (isBackground = false) => {
     if (!isBackground) setLoading(true);
@@ -50,7 +141,6 @@ export default function TechScreen({ user, onLogout }) {
   useEffect(() => {
     fetchMyItems(false);
 
-    // 🌟 الاستماع اللحظي للفني (لتحديث عهدته تلقائياً إذا قام الأدمن بصرف مواد له)
     const techRealtimeChannel = supabase
       .channel('tech_screen_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_techs', filter: `techUsername=eq.${user.username}` }, () => {
@@ -110,6 +200,7 @@ export default function TechScreen({ user, onLogout }) {
 
     setIsSubmitting(true);
 
+    // تحديث الشاشة محلياً فوراً
     const updatedItems = myItems.map(i => {
       if (String(i.itemId) === String(selectedItemId)) {
         return { ...i, quantity: i.quantity - qtyToSell };
@@ -119,8 +210,71 @@ export default function TechScreen({ user, onLogout }) {
 
     setMyItems(updatedItems);
     setIsDispenseModalOpen(false);
-    setMsg('✅ تم الصرف بنجاح!');
-    setTimeout(() => setMsg(''), 3000);
+
+    // تجهيز بيانات العملية
+    const finalPrice = isFree ? 0 : Number(itemPrice);
+    const totalAmount = finalPrice * qtyToSell;
+    const todayDate = new Date().toISOString().split('T')[0];
+    const freeLabel = isFree ? ' (مجاني)' : '';
+    const noteStr = `بيع مباشر (مواد): ${selectedItem.itemName} | العدد: ${qtyToSell} | المشتري: ${customerName} - ${customerPhone}${freeLabel}`;
+
+    const syncPayload = {
+      selectedItemId,
+      qtyToSell,
+      totalAmount,
+      todayDate,
+      noteStr,
+      timestamp: new Date().getTime()
+    };
+
+    if (!navigator.onLine) {
+      // 🌟 حفظ العملية محلياً إذا لم يكن هناك إنترنت
+      const db = await initDB();
+      await db.add('offline_sales', syncPayload);
+      checkPendingSync();
+      
+      setMsg('📶 أوفلاين: تم حفظ العملية محلياً بنجاح وسيتم إرسالها للإدارة تلقائياً عند توفر إنترنت.');
+    } else {
+      // 🌟 إرسال مباشر إذا كان متصلاً
+      try {
+        const { data: rows } = await supabase
+          .from('inventory_techs')
+          .select('*')
+          .eq('techUsername', user.username)
+          .eq('itemId', selectedItemId);
+
+        let remainingToDeduct = qtyToSell;
+        for (let row of rows) {
+          if (remainingToDeduct <= 0) break;
+          if (Number(row.quantity) <= remainingToDeduct) {
+            await supabase.from('inventory_techs').delete().eq('id', row.id);
+            remainingToDeduct -= Number(row.quantity);
+          } else {
+            await supabase.from('inventory_techs').update({ quantity: Number(row.quantity) - remainingToDeduct }).eq('id', row.id);
+            remainingToDeduct = 0;
+          }
+        }
+
+        await supabase.from('safe_manual_entries').insert([{
+          amount: totalAmount,
+          date: todayDate,
+          note: noteStr,
+          is_paid: false, // 🌟 التعديل هنا: الفني يرسل المبيعات كغير مستلمة
+          created_by: user.username
+        }]);
+
+        setMsg('✅ تم الصرف بنجاح!');
+        fetchMyItems(true);
+      } catch (err) {
+        // في حال فشل الإرسال (ضعف إنترنت مفاجئ)، نحفظها محلياً لضمان عدم ضياعها
+        const db = await initDB();
+        await db.add('offline_sales', syncPayload);
+        checkPendingSync();
+        setMsg('⚠️ ضعف اتصال: تم حفظ العملية محلياً لضمان عدم ضياعها.');
+      }
+    }
+
+    setTimeout(() => setMsg(''), 4000);
 
     setCustomerName('');
     setCustomerPhone('');
@@ -129,45 +283,6 @@ export default function TechScreen({ user, onLogout }) {
     setItemPrice('');
     setIsFree(false);
     setIsSubmitting(false);
-
-    try {
-      const { data: rows } = await supabase
-        .from('inventory_techs')
-        .select('*')
-        .eq('techUsername', user.username)
-        .eq('itemId', selectedItemId);
-
-      let remainingToDeduct = qtyToSell;
-      for (let row of rows) {
-        if (remainingToDeduct <= 0) break;
-        if (Number(row.quantity) <= remainingToDeduct) {
-          await supabase.from('inventory_techs').delete().eq('id', row.id);
-          remainingToDeduct -= Number(row.quantity);
-        } else {
-          await supabase.from('inventory_techs').update({ quantity: Number(row.quantity) - remainingToDeduct }).eq('id', row.id);
-          remainingToDeduct = 0;
-        }
-      }
-
-      const finalPrice = isFree ? 0 : Number(itemPrice);
-      const totalAmount = finalPrice * qtyToSell;
-      const todayDate = new Date().toISOString().split('T')[0];
-      const freeLabel = isFree ? ' (مجاني)' : '';
-      const noteStr = `بيع مباشر (مواد): ${selectedItem.itemName} | العدد: ${qtyToSell} | المشتري: ${customerName} - ${customerPhone}${freeLabel}`;
-
-      await supabase.from('safe_manual_entries').insert([{
-        amount: totalAmount,
-        date: todayDate,
-        note: noteStr,
-        is_paid: true,
-        created_by: user.username
-      }]);
-
-      fetchMyItems(true);
-    } catch (err) {
-      console.error("خطأ في مزامنة الخلفية:", err);
-      fetchMyItems(true);
-    }
   };
 
   const currentTotalDispensePrice = (Number(itemPrice) || 0) * Number(dispenseQty);
@@ -175,12 +290,15 @@ export default function TechScreen({ user, onLogout }) {
   return (
     <div className="min-h-screen bg-slate-50 p-4 font-sans pb-20" dir="rtl">
       
-      <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-lg mb-6 flex justify-between items-center relative overflow-hidden max-w-4xl mx-auto">
+      <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-lg mb-4 flex justify-between items-center relative overflow-hidden max-w-4xl mx-auto">
         <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-blue-500/20 rounded-full blur-2xl pointer-events-none"></div>
-        <div className="relative z-10">
-          <p className="text-blue-300 text-sm font-bold flex items-center gap-2 mb-1"><FiTool /> حساب الفني (اللوجستيات)</p>
-          <h2 className="text-2xl font-black">{user.name}</h2>
-          <p className="text-slate-400 text-xs mt-1" dir="ltr">@{user.username}</p>
+        <div className="relative z-10 flex items-center gap-4">
+          <img src="/logo.jpeg" alt="Fly Teck" className="h-16 w-16 rounded-2xl object-cover shadow-md border-2 border-white/10" />
+          <div>
+            <p className="text-blue-300 text-sm font-bold flex items-center gap-2 mb-1">حساب الفني </p>
+            <h2 className="text-2xl font-black">{user.name}</h2>
+            <p className="text-slate-400 text-xs mt-1" dir="ltr">@{user.username}</p>
+          </div>
         </div>
         <button onClick={onLogout} className="bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white p-3 rounded-2xl transition-all relative z-10" title="تسجيل الخروج">
           <FiLogOut size={24} />
@@ -188,11 +306,25 @@ export default function TechScreen({ user, onLogout }) {
       </div>
 
       <div className="max-w-4xl mx-auto">
+
+        {/* شريط حالة الاتصال */}
+        {!isOnline && (
+          <div className="bg-amber-100 text-amber-800 p-3 rounded-xl mb-4 flex items-center justify-between shadow-sm border border-amber-200 text-sm font-bold animate-pulse">
+            <div className="flex items-center gap-2"><FiWifiOff size={18}/> أنت الآن تعمل بدون إنترنت (أوفلاين)</div>
+          </div>
+        )}
+
+        {pendingSync > 0 && (
+          <div className="bg-blue-100 text-blue-800 p-3 rounded-xl mb-4 flex items-center justify-between shadow-sm border border-blue-200 text-sm font-bold">
+            <div className="flex items-center gap-2"><FiUploadCloud size={18}/> يوجد {pendingSync} مبيعات في الانتظار للإرسال...</div>
+            {isOnline && <button onClick={syncOfflineData} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-xs">مزامنة الآن</button>}
+          </div>
+        )}
         
         {msg && (
-          <div className="bg-emerald-50 border-r-4 border-emerald-500 p-4 mb-6 rounded-l-xl flex items-center gap-2 shadow-sm animate-fade-in">
-            <FiCheckCircle className="text-emerald-500" size={20} />
-            <p className="text-emerald-800 font-bold">{msg}</p>
+          <div className={`border-r-4 p-4 mb-6 rounded-l-xl flex items-center gap-2 shadow-sm animate-fade-in ${msg.includes('أوفلاين') || msg.includes('ضعف اتصال') ? 'bg-amber-50 border-amber-500 text-amber-800' : 'bg-emerald-50 border-emerald-500 text-emerald-800'}`}>
+            {msg.includes('أوفلاين') || msg.includes('ضعف اتصال') ? <FiWifiOff size={20} /> : <FiCheckCircle size={20} />}
+            <p className="font-bold text-sm">{msg}</p>
           </div>
         )}
 
@@ -309,7 +441,7 @@ export default function TechScreen({ user, onLogout }) {
                 </div>
 
                 <button type="submit" disabled={isSubmitting} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md mt-2 flex items-center justify-center gap-2">
-                  {isSubmitting ? <FiRefreshCw className="animate-spin" /> : <><FiCheckCircle /> تأكيد الصرف والخصم الفوري</>}
+                  {isSubmitting ? <FiRefreshCw className="animate-spin" /> : <><FiCheckCircle /> تأكيد الصرف والخصم</>}
                 </button>
               </form>
             </div>
