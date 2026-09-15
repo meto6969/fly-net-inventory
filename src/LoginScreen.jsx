@@ -62,7 +62,7 @@ export default function LoginScreen({ onLogin }) {
           <div className="flex justify-center mb-4">
             <img src="/logo.jpeg" alt="Fly Tech Logo" className="h-28 w-28 object-cover rounded-3xl shadow-2xl border-2 border-slate-600" />
           </div>
-          <h1 className="text-2xl font-black text-white tracking-wider mb-2">Fly Teck Logistics</h1>
+          <h1 className="text-2xl font-black text-white tracking-wider mb-2">Fly Teck</h1>
           <p className="text-slate-400 text-sm">بوابة الدخول لنظام المخازن والعُهد</p>
         </div>
 
