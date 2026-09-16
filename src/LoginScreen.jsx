@@ -56,9 +56,14 @@ export default function LoginScreen({ onLogin }) {
       <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-emerald-600/20 rounded-full blur-3xl pointer-events-none"></div>
 
       <div className="bg-slate-800/80 backdrop-blur-xl p-8 md:p-10 rounded-3xl shadow-2xl border border-slate-700 w-full max-w-md relative z-10">
-        <div className="text-center mb-10">
-          <h1 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-l from-blue-400 to-emerald-400 tracking-wider mb-2">FLY NET</h1>
-          <p className="text-slate-400 text-sm">بوابة الدخول لنظام المخازن واللوجستيات</p>
+        
+        {/* 🌟 تم إضافة الشعار هنا */}
+        <div className="text-center mb-8">
+          <div className="flex justify-center mb-4">
+            <img src="/logo.jpeg" alt="Fly Tech Logo" className="h-28 w-28 object-cover rounded-3xl shadow-2xl border-2 border-slate-600" />
+          </div>
+          <h1 className="text-2xl font-black text-white tracking-wider mb-2">Fly Teck</h1>
+          <p className="text-slate-400 text-sm">بوابة الدخول لنظام المخازن والعُهد</p>
         </div>
 
         {error && <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 rounded-xl mb-6 text-sm text-center font-bold">{error}</div>}
@@ -85,7 +90,7 @@ export default function LoginScreen({ onLogin }) {
             <label htmlFor="remember" className="text-sm text-slate-400 cursor-pointer select-none">تذكرني والبقاء مسجلاً</label>
           </div>
 
-          <button type="submit" disabled={isLoading} className="w-full bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-900/50 transition-all flex justify-center items-center gap-2 mt-4 disabled:opacity-70">
+          <button type="submit" disabled={isLoading} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-900/50 transition-all flex justify-center items-center gap-2 mt-4 disabled:opacity-70">
             {isLoading ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <><FiLogIn size={20} /><span>تسجيل الدخول</span></>}
           </button>
         </form>
