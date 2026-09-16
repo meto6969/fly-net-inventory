@@ -323,7 +323,7 @@ export default function TechScreen({ user, onLogout }) {
             <img src="/logo.jpeg" alt="Fly Teck" className="h-10 w-10 object-cover rounded-lg" />
           </div>
           <div>
-            <h1 className="font-black text-lg">نظام الفنيين</h1>
+            <h1 className="font-black text-lg">نظام المواد</h1>
             <p className="text-slate-400 text-xs mt-0.5">مرحباً، {user?.name}</p>
           </div>
         </div>

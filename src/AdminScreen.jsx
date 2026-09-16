@@ -163,7 +163,6 @@ export default function AdminScreen({ user, onLogout }) {
           
           const amount = Number(entry.amount) || 0;
           const isFreeCheck = amount === 0 && entry.note && entry.note.includes('(مجاني)');
-          // 🌟 إذا كانت الفاتورة لمشترك وتحتوي على مجاني، لا نعتبرها مستلمة بل معلقة كباقي الفاتورة.
           const isPaid = entry.is_paid !== false;
           
           if (!groupedFinance[dateStr]) groupedFinance[dateStr] = { date: dateStr, total: 0, ticketsTotal: 0, ticketsProfit: 0, freeCost: 0, freeCount: 0, unpaidTicketsTotal: 0, manualNotes: [] };
@@ -200,10 +199,7 @@ export default function AdminScreen({ user, onLogout }) {
             }
           } 
           else if (entry.note && entry.note.includes('أجور اشتراك')) {
-             itemProfit = amount;
-             if (isPaid) {
-               groupedFinance[dateStr].ticketsProfit += itemProfit;
-             }
+             itemProfit = 0;
           }
 
           groupedFinance[dateStr].manualNotes.push({
@@ -259,7 +255,7 @@ export default function AdminScreen({ user, onLogout }) {
       if (entry.note && (entry.note.includes('بيع مباشر (مواد)') || entry.note.includes('أجور اشتراك'))) {
         const parts = entry.note.split('|').map(p => p.trim());
         const buyerPart = parts.find(p => p.includes('المشتري:')) || '';
-        const buyerInfo = buyerPart.replace('المشتري:', '').trim();
+        let buyerInfo = buyerPart.replace('المشتري:', '').replace(/\(مجاني\)/g, '').trim();
 
         const isSubscription = entry.note.includes('أجور اشتراك');
         const itemName = isSubscription ? 'أجور اشتراك / تركيب' : parts[0].replace('بيع مباشر (مواد):', '').trim();
@@ -276,8 +272,8 @@ export default function AdminScreen({ user, onLogout }) {
         let wholesalePrice = 0;
 
         if (isSubscription) {
-           profit = sellPrice;
-           profitKnown = true;
+           profit = 0;
+           profitKnown = false;
         } else {
            const matchedItem = mainItems.find(i => i.name === itemName);
            wholesalePrice = matchedItem ? Number(matchedItem.wholesalePrice) * qty : 0;
@@ -320,7 +316,6 @@ export default function AdminScreen({ user, onLogout }) {
           profit: profit,
           wholesaleCost: freeCost,
           profitKnown: profitKnown,
-          // 🌟 نعتمد حالة الاستلام الحقيقية من قاعدة البيانات لكي تندمج المجانية مع غيرها في الفاتورة
           isPaid: entry.is_paid !== false,
           receiverInfo: receiverInfo,
           isSubscription: isSubscription
@@ -362,7 +357,6 @@ export default function AdminScreen({ user, onLogout }) {
     
     rawList.forEach(sale => {
       if (sale.source === 'manual') {
-        // 🌟 مفتاح الدمج أصبح يعتمد على المشترك والبائع والوقت (حتى لو كانت إحداهما مجانية)
         const key = `${sale.displayDate}_${sale.seller}_${sale.buyer}`;
         
         if (groupedMap.has(key)) {
@@ -394,7 +388,6 @@ export default function AdminScreen({ user, onLogout }) {
           existing.quantity = q1 + q2;
 
           if (!sale.isFree) existing.isFree = false; 
-          if (!sale.profitKnown) existing.profitKnown = false;
         } else {
           groupedMap.set(key, {
             ...sale,
@@ -475,7 +468,7 @@ export default function AdminScreen({ user, onLogout }) {
 
   const totalSalesAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && !it.isFree && !it.isSubscription ? it.sellPrice : 0), 0), 0);
   const totalSubAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && it.isSubscription ? it.sellPrice : 0), 0), 0);
-  const totalProfitAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && !it.isFree ? it.profit : 0), 0), 0);
+  const totalProfitAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && !it.isFree && !it.isSubscription ? it.profit : 0), 0), 0);
   const totalFreeCostAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && it.isFree ? (it.wholesaleCost || 0) : 0), 0), 0);
   const totalFreeQty = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && it.isFree && !it.isSubscription ? (Number(it.quantity) || 0) : 0), 0), 0);
   const totalPendingAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (!group.isPaid && !it.isFree ? it.sellPrice : 0), 0), 0);
@@ -1388,7 +1381,6 @@ export default function AdminScreen({ user, onLogout }) {
                         <th className="p-4 font-bold">بواسطة (البائع)</th>
                         <th className="p-4 font-bold">المواد والاشتراكات (للمشترك)</th>
                         <th className="p-4 font-bold text-center">الكمية</th>
-                        {/* 🌟 عمود جديد لمبلغ الاشتراك */}
                         <th className="p-4 font-bold text-amber-700 bg-amber-50 text-center">مبلغ الاشتراك</th>
                         <th className="p-4 font-bold text-emerald-700 bg-emerald-50 text-center">مبلغ المواد</th>
                         <th className="p-4 font-bold text-blue-700 bg-blue-50 text-center">إجمالي الربح الصافي</th>
@@ -1400,7 +1392,6 @@ export default function AdminScreen({ user, onLogout }) {
                         <tr><td colSpan="8" className="p-8 text-center text-slate-400 font-bold">لا توجد حركات مطابقة للبحث.</td></tr>
                       ) : (
                         filteredSalesList.map((sale, groupIdx) => {
-                           // 🌟 التحقق مما إذا كانت الفاتورة مجانية بالكامل للمواد فقط
                            const allMaterialsFree = sale.items.filter(i => !i.isSubscription).every(i => i.isFree);
                            const hasMaterials = sale.items.some(i => !i.isSubscription);
 
@@ -1418,11 +1409,12 @@ export default function AdminScreen({ user, onLogout }) {
                                
                                <td className="p-4">
                                  <div className="flex flex-col gap-1.5 mb-2">
-                                   {sale.items.map((it, idx) => (
-                                     <div key={idx} className={`font-bold text-sm flex items-center gap-1.5 ${it.isSubscription ? 'text-amber-700' : 'text-slate-800'}`}>
-                                       <span className={`w-1.5 h-1.5 rounded-full ${it.isSubscription ? 'bg-amber-400' : 'bg-orange-400'}`}></span> 
+                                   {/* 🌟 إخفاء عبارة "أجور اشتراك / تركيب" من عرض المواد */}
+                                   {sale.items.filter(it => !it.isSubscription).map((it, idx) => (
+                                     <div key={idx} className="font-bold text-sm text-slate-800 flex items-center gap-1.5">
+                                       <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span> 
                                        {it.itemName}
-                                       {it.isFree && !it.isSubscription && <span className="text-[10px] bg-rose-100 text-rose-600 px-1.5 py-0.5 rounded font-black">مجاني</span>}
+                                       {it.isFree && <span className="text-[10px] bg-rose-100 text-rose-600 px-1.5 py-0.5 rounded font-black">مجاني</span>}
                                      </div>
                                    ))}
                                  </div>
@@ -1433,23 +1425,21 @@ export default function AdminScreen({ user, onLogout }) {
 
                                <td className="p-4 text-center font-black text-slate-600">
                                  <div className="flex flex-col gap-1.5">
-                                   {sale.items.map((it, idx) => (
+                                   {/* 🌟 إخفاء كمية أجور الاشتراك (التي هي "-") */}
+                                   {sale.items.filter(it => !it.isSubscription).map((it, idx) => (
                                      <div key={idx} className="text-sm">{it.quantity}</div>
                                    ))}
                                  </div>
                                </td>
                                
-                               {/* 🌟 خلية مبلغ الاشتراك */}
                                <td className={`p-4 text-center font-black ${sale.subscriptionPrice > 0 ? 'text-amber-600 bg-amber-50/50' : 'text-slate-400'}`}>
                                  {sale.subscriptionPrice > 0 ? `${sale.subscriptionPrice.toLocaleString()} د.ع` : '-'}
                                </td>
 
-                               {/* 🌟 خلية مبلغ المواد */}
                                <td className={`p-4 text-center font-black ${allMaterialsFree && hasMaterials ? 'bg-slate-50/50 text-rose-500' : !hasMaterials ? 'text-slate-400' : !sale.isPaid ? 'bg-amber-50 text-amber-700' : 'text-emerald-600 bg-emerald-50/30'}`}>
                                  {!hasMaterials ? '-' : allMaterialsFree ? <span className="bg-rose-100 text-rose-700 px-2.5 py-1 rounded-lg text-xs font-black">مجاني بالكامل</span> : `${sale.materialsPrice.toLocaleString()} د.ع`}
                                </td>
 
-                               {/* 🌟 خلية الربح والخسارة */}
                                <td className={`p-4 text-center font-black ${allMaterialsFree && hasMaterials ? 'bg-slate-50/30' : !sale.isPaid ? 'bg-amber-50/50 text-slate-400' : sale.profit > 0 ? 'text-blue-600 bg-blue-50/30' : sale.profit < 0 ? 'text-red-500 bg-red-50/30' : 'text-slate-600 bg-slate-50/30'}`}>
                                  {allMaterialsFree && hasMaterials ? (
                                    <div className="text-rose-600 text-[10px] leading-tight font-bold">
@@ -1463,7 +1453,6 @@ export default function AdminScreen({ user, onLogout }) {
                                  )}
                                </td>
 
-                               {/* 🌟 زر حالة الاستلام الموحد للفاتورة */}
                                <td className="p-4 text-center">
                                   <div className="flex flex-col items-center gap-1">
                                     <button 
