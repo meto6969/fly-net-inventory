@@ -1,449 +1,487 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import { FiTool, FiLogOut, FiBox, FiRefreshCw, FiLayers, FiShoppingCart, FiX, FiUser, FiPhone, FiCheckCircle, FiWifiOff, FiUploadCloud } from 'react-icons/fi';
-import { openDB } from 'idb'; // مكتبة التخزين المحلي
+import { openDB } from 'idb';
+import { FiBox, FiLogOut, FiShoppingCart, FiX, FiCheckCircle, FiAlertCircle, FiWifiOff, FiRefreshCw, FiPlus, FiTrash2, FiUser, FiPhone } from 'react-icons/fi';
 
-// إعداد قاعدة البيانات المحلية للأوفلاين
+const getLocalTodayDate = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+// تهيئة قاعدة البيانات المحلية للأوفلاين
 const initDB = async () => {
-  return openDB('FlyTechOfflineDB', 1, {
+  return openDB('flyteck-offline-db', 1, {
     upgrade(db) {
-      if (!db.objectStoreNames.contains('offline_sales')) {
-        db.createObjectStore('offline_sales', { keyPath: 'id', autoIncrement: true });
+      if (!db.objectStoreNames.contains('sync-queue')) {
+        db.createObjectStore('sync-queue', { keyPath: 'id', autoIncrement: true });
       }
     },
   });
 };
 
 export default function TechScreen({ user, onLogout }) {
-  const [myItems, setMyItems] = useState([]);
+  const [techInventory, setTechInventory] = useState([]);
   const [mainItems, setMainItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
-  
-  // حالات الأوفلاين
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [pendingSync, setPendingSync] = useState(0);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
 
+  // حالات نافذة الصرف (السلة)
   const [isDispenseModalOpen, setIsDispenseModalOpen] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
+  const [dispenseCustomerName, setDispenseCustomerName] = useState('');
+  const [dispenseCustomerPhone, setDispenseCustomerPhone] = useState('');
+  
+  // حالات إضافة مادة واحدة للسلة
+  const [cart, setCart] = useState([]);
   const [selectedItemId, setSelectedItemId] = useState('');
-  const [dispenseQty, setDispenseQty] = useState(1);
-  const [itemPrice, setItemPrice] = useState('');
+  const [selectedQty, setSelectedQty] = useState(1);
+  const [customPrice, setCustomPrice] = useState('');
   const [isFree, setIsFree] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDispensing, setIsDispensing] = useState(false);
 
-  // 🌟 استرجاع العمليات المعلقة من الذاكرة المحلية
-  const checkPendingSync = async () => {
-    const db = await initDB();
-    const allPending = await db.getAll('offline_sales');
-    setPendingSync(allPending.length);
+  const showMsg = (text) => {
+    setMsg(text);
+    setTimeout(() => setMsg(''), 4000);
   };
 
-  // 🌟 المزامنة التلقائية عند عودة الإنترنت
-  const syncOfflineData = async () => {
-    if (!navigator.onLine) return;
-    
-    const db = await initDB();
-    const allPending = await db.getAll('offline_sales');
-    
-    if (allPending.length === 0) return;
-
-    for (const record of allPending) {
-      try {
-        // تنفيذ عملية البيع التي كانت معلقة
-        const { data: rows } = await supabase
-          .from('inventory_techs')
-          .select('*')
-          .eq('techUsername', user.username)
-          .eq('itemId', record.selectedItemId);
-
-        let remainingToDeduct = record.qtyToSell;
-        for (let row of rows) {
-          if (remainingToDeduct <= 0) break;
-          if (Number(row.quantity) <= remainingToDeduct) {
-            await supabase.from('inventory_techs').delete().eq('id', row.id);
-            remainingToDeduct -= Number(row.quantity);
-          } else {
-            await supabase.from('inventory_techs').update({ quantity: Number(row.quantity) - remainingToDeduct }).eq('id', row.id);
-            remainingToDeduct = 0;
-          }
-        }
-
-        await supabase.from('safe_manual_entries').insert([{
-          amount: record.totalAmount,
-          date: record.todayDate,
-          note: record.noteStr,
-          is_paid: true,
-          created_by: user.username
-        }]);
-
-        // مسح العملية من الذاكرة المحلية بعد نجاح الإرسال
-        await db.delete('offline_sales', record.id);
-      } catch (err) {
-        console.error("فشل في مزامنة أحد القيود:", err);
-      }
-    }
-    
-    checkPendingSync();
-    fetchMyItems(true); // جلب البيانات المحدثة
-  };
-
-  // مراقبة حالة الاتصال بالإنترنت
   useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true);
-      syncOfflineData(); // مزامنة فورية عند عودة النت
-    };
-    const handleOffline = () => setIsOnline(false);
-
+    const handleOnline = () => { setIsOffline(false); processQueue(); };
+    const handleOffline = () => setIsOffline(true);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-
     checkPendingSync();
+    fetchData();
+
+    // مزامنة حية إذا كان هناك إنترنت
+    const realtimeChannel = supabase
+      .channel('tech_live_sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_techs', filter: `techUsername=eq.${user.username}` }, () => fetchData())
+      .subscribe();
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      supabase.removeChannel(realtimeChannel);
     };
   }, []);
 
-  const fetchMyItems = async (isBackground = false) => {
-    if (!isBackground) setLoading(true);
-    try {
-      const [{ data: mainData }, { data, error }] = await Promise.all([
-        supabase.from('inventory_main').select('id, customerPrice'),
-        supabase.from('inventory_techs').select('*').eq('techUsername', user.username).order('itemName')
-      ]);
-
-      if (mainData) setMainItems(mainData);
-      
-      if (!error && data) {
-        const groupedRaw = data.reduce((acc, item) => {
-          const qty = Number(item.quantity) || 0;
-          if (qty <= 0) return acc;
-          const itemIdStr = String(item.itemId);
-          if (acc[itemIdStr]) {
-            acc[itemIdStr].quantity += qty;
-          } else {
-            acc[itemIdStr] = { ...item, quantity: qty };
-          }
-          return acc;
-        }, {});
-        setMyItems(Object.values(groupedRaw));
-      }
-    } catch (err) {
-      console.error("Error fetching tech items:", err);
+  const fetchData = async () => {
+    if (!navigator.onLine) {
+      setLoading(false);
+      return; 
     }
-    if (!isBackground) setLoading(false);
+    try {
+      const [techRes, mainRes] = await Promise.all([
+        supabase.from('inventory_techs').select('*').eq('techUsername', user.username),
+        supabase.from('inventory_main').select('id, customerPrice')
+      ]);
+      if (techRes.error) throw techRes.error;
+      
+      const techData = techRes.data || [];
+      const mainData = mainRes.data || [];
+      
+      const combinedData = techData.map(tItem => {
+        const mItem = mainData.find(m => String(m.id) === String(tItem.itemId));
+        return { ...tItem, customerPrice: mItem ? mItem.customerPrice : 0 };
+      });
+
+      setTechInventory(combinedData);
+      setMainItems(mainData);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => {
-    fetchMyItems(false);
+  const checkPendingSync = async () => {
+    try {
+      const db = await initDB();
+      const allItems = await db.getAll('sync-queue');
+      setPendingSyncCount(allItems.length);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
-    const techRealtimeChannel = supabase
-      .channel('tech_screen_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_techs', filter: `techUsername=eq.${user.username}` }, () => {
-        fetchMyItems(true);
-      })
-      .subscribe();
+  const saveToQueue = async (action) => {
+    try {
+      const db = await initDB();
+      await db.add('sync-queue', action);
+      checkPendingSync();
+    } catch (error) {
+      console.error("Error saving to offline queue", error);
+    }
+  };
 
-    return () => {
-      supabase.removeChannel(techRealtimeChannel);
-    };
-  }, [user.username]);
+  const processQueue = async () => {
+    if (isSyncing || !navigator.onLine) return;
+    setIsSyncing(true);
+    try {
+      const db = await initDB();
+      const queue = await db.getAll('sync-queue');
+      
+      if (queue.length === 0) {
+        setIsSyncing(false);
+        return;
+      }
 
-  const totalItemsCount = myItems.reduce((sum, item) => sum + item.quantity, 0);
+      showMsg('⏳ جاري مزامنة العمليات المعلقة مع السيرفر...');
+      
+      for (const item of queue) {
+        if (item.type === 'dispense_item') {
+           const { techItemId, deductQty, amount, date, note, created_by } = item.payload;
+           
+           // جلب الكمية الحالية من السيرفر قبل الخصم
+           const { data: currentTechItem } = await supabase.from('inventory_techs').select('quantity').eq('id', techItemId).single();
+           if (currentTechItem) {
+              await supabase.from('inventory_techs').update({ quantity: Number(currentTechItem.quantity) - deductQty }).eq('id', techItemId);
+           }
+           
+           await supabase.from('safe_manual_entries').insert([{
+             amount: amount,
+             date: date,
+             note: note,
+             is_paid: false, // دائماً غير مستلم من الفني
+             created_by: created_by
+           }]);
+        }
+        await db.delete('sync-queue', item.id);
+      }
+      
+      showMsg('✅ تمت مزامنة جميع العمليات بنجاح!');
+      checkPendingSync();
+      fetchData();
+    } catch (error) {
+      console.error("Error processing queue", error);
+      showMsg('⚠️ حدث خطأ أثناء المزامنة، سيتم المحاولة لاحقاً.');
+    }
+    setIsSyncing(false);
+  };
 
+  // وظائف سلة الصرف (Cart)
   const handleItemSelect = (e) => {
     const id = e.target.value;
     setSelectedItemId(id);
-    setIsFree(false);
-    
-    if (id) {
-      const mainItem = mainItems.find(m => String(m.id) === String(id));
-      if (mainItem) {
-        setItemPrice(mainItem.customerPrice || 0);
-      } else {
-        setItemPrice(0);
-      }
+    const item = techInventory.find(i => String(i.itemId) === String(id));
+    if (item) {
+      setCustomPrice(item.customerPrice);
     } else {
-      setItemPrice('');
+      setCustomPrice('');
     }
   };
 
-  const toggleFree = () => {
-    if (!isFree) {
-      setItemPrice(0);
-      setIsFree(true);
-    } else {
-      const mainItem = mainItems.find(m => String(m.id) === String(selectedItemId));
-      setItemPrice(mainItem ? mainItem.customerPrice : 0);
-      setIsFree(false);
-    }
-  };
-
-  const handleDispenseSubmit = async (e) => {
+  const handleAddToCart = (e) => {
     e.preventDefault();
-    if (!selectedItemId || dispenseQty < 1 || itemPrice === '') {
-      alert('الرجاء إكمال جميع البيانات بشكل صحيح.');
+    if (!selectedItemId || selectedQty < 1) return;
+
+    const item = techInventory.find(i => String(i.itemId) === String(selectedItemId));
+    if (!item) return;
+
+    const existingCartItem = cart.find(c => String(c.itemId) === String(selectedItemId));
+    const totalWanted = existingCartItem ? existingCartItem.qty + Number(selectedQty) : Number(selectedQty);
+
+    if (totalWanted > item.quantity) {
+      alert(`عذراً! الكمية المتوفرة في عهدتك من ${item.itemName} هي ${item.quantity} فقط.`);
       return;
     }
 
-    const selectedItem = myItems.find(i => String(i.itemId) === String(selectedItemId));
-    const qtyToSell = Number(dispenseQty);
+    const priceToUse = isFree ? 0 : Number(customPrice);
 
-    if (!selectedItem || selectedItem.quantity < qtyToSell) {
-      alert("الكمية المطلوبة أكبر من المتوفر في عهدتك!");
-      return;
-    }
-
-    setIsSubmitting(true);
-
-    // تحديث الشاشة محلياً فوراً
-    const updatedItems = myItems.map(i => {
-      if (String(i.itemId) === String(selectedItemId)) {
-        return { ...i, quantity: i.quantity - qtyToSell };
-      }
-      return i;
-    }).filter(i => i.quantity > 0);
-
-    setMyItems(updatedItems);
-    setIsDispenseModalOpen(false);
-
-    // تجهيز بيانات العملية
-    const finalPrice = isFree ? 0 : Number(itemPrice);
-    const totalAmount = finalPrice * qtyToSell;
-    const todayDate = new Date().toISOString().split('T')[0];
-    const freeLabel = isFree ? ' (مجاني)' : '';
-    const noteStr = `بيع مباشر (مواد): ${selectedItem.itemName} | العدد: ${qtyToSell} | المشتري: ${customerName} - ${customerPhone}${freeLabel}`;
-
-    const syncPayload = {
-      selectedItemId,
-      qtyToSell,
-      totalAmount,
-      todayDate,
-      noteStr,
-      timestamp: new Date().getTime()
-    };
-
-    if (!navigator.onLine) {
-      // 🌟 حفظ العملية محلياً إذا لم يكن هناك إنترنت
-      const db = await initDB();
-      await db.add('offline_sales', syncPayload);
-      checkPendingSync();
-      
-      setMsg('📶 أوفلاين: تم حفظ العملية محلياً بنجاح وسيتم إرسالها للإدارة تلقائياً عند توفر إنترنت.');
+    if (existingCartItem) {
+      setCart(cart.map(c => String(c.itemId) === String(selectedItemId) ? { ...c, qty: c.qty + Number(selectedQty), price: priceToUse, isFree: isFree } : c));
     } else {
-      // 🌟 إرسال مباشر إذا كان متصلاً
-      try {
-        const { data: rows } = await supabase
-          .from('inventory_techs')
-          .select('*')
-          .eq('techUsername', user.username)
-          .eq('itemId', selectedItemId);
-
-        let remainingToDeduct = qtyToSell;
-        for (let row of rows) {
-          if (remainingToDeduct <= 0) break;
-          if (Number(row.quantity) <= remainingToDeduct) {
-            await supabase.from('inventory_techs').delete().eq('id', row.id);
-            remainingToDeduct -= Number(row.quantity);
-          } else {
-            await supabase.from('inventory_techs').update({ quantity: Number(row.quantity) - remainingToDeduct }).eq('id', row.id);
-            remainingToDeduct = 0;
-          }
-        }
-
-        await supabase.from('safe_manual_entries').insert([{
-          amount: totalAmount,
-          date: todayDate,
-          note: noteStr,
-          is_paid: false, // 🌟 التعديل هنا: الفني يرسل المبيعات كغير مستلمة
-          created_by: user.username
-        }]);
-
-        setMsg('✅ تم الصرف بنجاح!');
-        fetchMyItems(true);
-      } catch (err) {
-        // في حال فشل الإرسال (ضعف إنترنت مفاجئ)، نحفظها محلياً لضمان عدم ضياعها
-        const db = await initDB();
-        await db.add('offline_sales', syncPayload);
-        checkPendingSync();
-        setMsg('⚠️ ضعف اتصال: تم حفظ العملية محلياً لضمان عدم ضياعها.');
-      }
+      setCart([...cart, { 
+        techItemId: item.id, 
+        itemId: item.itemId, 
+        itemName: item.itemName, 
+        qty: Number(selectedQty), 
+        price: priceToUse, 
+        isFree: isFree 
+      }]);
     }
 
-    setTimeout(() => setMsg(''), 4000);
-
-    setCustomerName('');
-    setCustomerPhone('');
     setSelectedItemId('');
-    setDispenseQty(1);
-    setItemPrice('');
+    setSelectedQty(1);
+    setCustomPrice('');
     setIsFree(false);
-    setIsSubmitting(false);
   };
 
-  const currentTotalDispensePrice = (Number(itemPrice) || 0) * Number(dispenseQty);
+  const handleRemoveFromCart = (itemId) => {
+    setCart(cart.filter(c => String(c.itemId) !== String(itemId)));
+  };
+
+  const handleCartSubmit = async (e) => {
+    e.preventDefault();
+    if (!dispenseCustomerName || !dispenseCustomerPhone) {
+      alert("يرجى إدخال اسم المشترك ورقم هاتفه.");
+      return;
+    }
+    if (cart.length === 0) {
+      alert("السلة فارغة! يرجى إضافة مواد للبيع.");
+      return;
+    }
+
+    setIsDispensing(true);
+    const todayDate = getLocalTodayDate();
+    let currentOfflineStatus = !navigator.onLine;
+
+    try {
+      for (const cartItem of cart) {
+        const totalPrice = cartItem.price * cartItem.qty;
+        const freeLabel = cartItem.isFree ? ' (مجاني)' : '';
+        const noteStr = `بيع مباشر (مواد): ${cartItem.itemName} | العدد: ${cartItem.qty} | المشتري: ${dispenseCustomerName} - ${dispenseCustomerPhone}${freeLabel}`;
+
+        if (currentOfflineStatus) {
+          // حفظ في الأوفلاين
+          await saveToQueue({
+            type: 'dispense_item',
+            payload: {
+              techItemId: cartItem.techItemId,
+              deductQty: cartItem.qty,
+              amount: totalPrice,
+              date: todayDate,
+              note: noteStr,
+              created_by: user.username
+            }
+          });
+          
+          // تحديث الواجهة فورياً للمستخدم
+          const updatedInventory = techInventory.map(i => {
+            if (String(i.itemId) === String(cartItem.itemId)) {
+              return { ...i, quantity: i.quantity - cartItem.qty };
+            }
+            return i;
+          });
+          setTechInventory(updatedInventory);
+
+        } else {
+          // حفظ مباشر أونلاين
+          const techItemData = techInventory.find(i => String(i.itemId) === String(cartItem.itemId));
+          await supabase.from('inventory_techs')
+            .update({ quantity: techItemData.quantity - cartItem.qty })
+            .eq('id', cartItem.techItemId);
+
+          await supabase.from('safe_manual_entries').insert([{
+            amount: totalPrice,
+            date: todayDate,
+            note: noteStr,
+            is_paid: false, // 🌟 دائماً الفني يرسل المبيعات كـ (غير مستلمة) للإدارة
+            created_by: user.username
+          }]);
+        }
+      }
+
+      showMsg(currentOfflineStatus ? '⚠️ تم الحفظ محلياً (لا يوجد إنترنت). ستتم المزامنة لاحقاً.' : '✅ تمت عملية صرف المواد بنجاح!');
+      setIsDispenseModalOpen(false);
+      setCart([]);
+      setDispenseCustomerName('');
+      setDispenseCustomerPhone('');
+      if (!currentOfflineStatus) fetchData();
+
+    } catch (err) {
+      alert("حدث خطأ أثناء الصرف: " + err.message);
+    }
+    setIsDispensing(false);
+  };
+
+  const totalCartAmount = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 font-sans pb-20" dir="rtl">
+    <div className="min-h-screen bg-slate-50 font-sans" dir="rtl">
       
-      <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-lg mb-4 flex justify-between items-center relative overflow-hidden max-w-4xl mx-auto">
-        <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-blue-500/20 rounded-full blur-2xl pointer-events-none"></div>
-        <div className="relative z-10 flex items-center gap-4">
-          <img src="/logo.jpeg" alt="Fly Teck" className="h-16 w-16 rounded-2xl object-cover shadow-md border-2 border-white/10" />
+      {/* التنبيهات العائمة */}
+      {msg && (
+        <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in border-r-4 min-w-[300px] ${msg.includes('⚠️') || msg.includes('⏳') ? 'bg-amber-50 border-amber-500 text-amber-800' : 'bg-emerald-50 border-emerald-500 text-emerald-800'}`}>
+          {msg.includes('⚠️') || msg.includes('⏳') ? <FiAlertCircle size={22}/> : <FiCheckCircle size={22}/>}
+          <p className="font-bold text-sm">{msg}</p>
+        </div>
+      )}
+
+      {/* الترويسة العلوية */}
+      <div className="bg-slate-900 text-white px-6 py-4 shadow-md sticky top-0 z-40 flex justify-between items-center">
+        <div className="flex items-center gap-4">
+          <div className="bg-white p-1 rounded-xl shadow-sm">
+            <img src="/logo.jpeg" alt="Fly Teck" className="h-10 w-10 object-cover rounded-lg" />
+          </div>
           <div>
-            <p className="text-blue-300 text-sm font-bold flex items-center gap-2 mb-1">حساب الفني </p>
-            <h2 className="text-2xl font-black">{user.name}</h2>
-            <p className="text-slate-400 text-xs mt-1" dir="ltr">@{user.username}</p>
+            <h1 className="font-black text-lg">نظام الفنيين</h1>
+            <p className="text-slate-400 text-xs mt-0.5">مرحباً، {user?.name}</p>
           </div>
         </div>
-        <button onClick={onLogout} className="bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white p-3 rounded-2xl transition-all relative z-10" title="تسجيل الخروج">
-          <FiLogOut size={24} />
-        </button>
+        
+        <div className="flex items-center gap-4">
+          {isOffline ? (
+            <div className="flex items-center gap-2 text-rose-400 bg-rose-400/10 px-3 py-1.5 rounded-lg text-xs font-bold border border-rose-400/20">
+              <FiWifiOff size={16} /> <span className="hidden sm:inline">أوفلاين</span>
+            </div>
+          ) : (
+            pendingSyncCount > 0 && (
+              <button onClick={processQueue} disabled={isSyncing} className="flex items-center gap-2 text-amber-400 bg-amber-400/10 hover:bg-amber-400/20 px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-400/20 transition-colors">
+                <FiRefreshCw className={isSyncing ? 'animate-spin' : ''} size={16} /> 
+                <span className="hidden sm:inline">مزامنة ({pendingSyncCount})</span>
+              </button>
+            )
+          )}
+          <div className="w-px h-6 bg-slate-700 mx-1"></div>
+          <button onClick={onLogout} className="text-rose-400 hover:text-rose-300 hover:bg-rose-400/10 p-2 rounded-lg transition-colors" title="تسجيل خروج">
+            <FiLogOut size={22} />
+          </button>
+        </div>
       </div>
 
-      <div className="max-w-4xl mx-auto">
-
-        {/* شريط حالة الاتصال */}
-        {!isOnline && (
-          <div className="bg-amber-100 text-amber-800 p-3 rounded-xl mb-4 flex items-center justify-between shadow-sm border border-amber-200 text-sm font-bold animate-pulse">
-            <div className="flex items-center gap-2"><FiWifiOff size={18}/> أنت الآن تعمل بدون إنترنت (أوفلاين)</div>
-          </div>
-        )}
-
-        {pendingSync > 0 && (
-          <div className="bg-blue-100 text-blue-800 p-3 rounded-xl mb-4 flex items-center justify-between shadow-sm border border-blue-200 text-sm font-bold">
-            <div className="flex items-center gap-2"><FiUploadCloud size={18}/> يوجد {pendingSync} مبيعات في الانتظار للإرسال...</div>
-            {isOnline && <button onClick={syncOfflineData} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-xs">مزامنة الآن</button>}
-          </div>
-        )}
+      <div className="max-w-4xl mx-auto p-6">
         
-        {msg && (
-          <div className={`border-r-4 p-4 mb-6 rounded-l-xl flex items-center gap-2 shadow-sm animate-fade-in ${msg.includes('أوفلاين') || msg.includes('ضعف اتصال') ? 'bg-amber-50 border-amber-500 text-amber-800' : 'bg-emerald-50 border-emerald-500 text-emerald-800'}`}>
-            {msg.includes('أوفلاين') || msg.includes('ضعف اتصال') ? <FiWifiOff size={20} /> : <FiCheckCircle size={20} />}
-            <p className="font-bold text-sm">{msg}</p>
-          </div>
-        )}
-
-        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6 px-2">
-          <div className="flex items-center gap-3">
-            <div className="bg-blue-100 text-blue-600 p-2.5 rounded-xl">
-              <FiBox size={22} />
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-800 text-lg">عهدتي الحالية</h3>
-              <p className="text-xs text-slate-500 font-bold">إجمالي القطع: <span className="text-blue-600">{totalItemsCount}</span></p>
-            </div>
-          </div>
-          
-          <div className="flex gap-2">
-            <button onClick={() => setIsDispenseModalOpen(true)} className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all shadow-md shadow-emerald-600/20">
-              <FiShoppingCart size={18} /> صرف مواد
-            </button>
-            <button onClick={() => fetchMyItems(false)} className="text-blue-600 bg-blue-50 px-4 py-2 rounded-xl hover:bg-blue-100 flex items-center justify-center transition-colors">
-              <FiRefreshCw className={loading ? 'animate-spin' : ''} />
-            </button>
-          </div>
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+            <FiBox className="text-blue-600" /> عُهدتي الحالية
+          </h2>
+          <button onClick={() => setIsDispenseModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 text-sm transition-all shadow-md">
+            <FiShoppingCart size={18} /> صرف لمشترك
+          </button>
         </div>
 
         {loading ? (
-          <div className="text-center py-20 text-slate-400 font-bold flex flex-col items-center justify-center gap-3">
-            <FiRefreshCw className="animate-spin text-blue-500 text-3xl" /> جاري مطابقة العُهدة...
-          </div>
-        ) : myItems.length === 0 ? (
-          <div className="bg-white rounded-3xl p-10 text-center shadow-sm border border-slate-200 border-dashed">
-            <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300"><FiBox size={32}/></div>
-            <p className="text-slate-500 font-bold text-lg">لا توجد مواد في عهدتك حالياً.</p>
+          <div className="flex justify-center items-center py-20 text-blue-600 font-bold">جاري تحميل العُهدة...</div>
+        ) : techInventory.filter(i => i.quantity > 0).length === 0 ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-12 text-center">
+            <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
+              <FiBox size={32} />
+            </div>
+            <h3 className="text-slate-600 font-bold text-lg mb-2">عُهدتك فارغة حالياً</h3>
+            <p className="text-slate-400 text-sm">لم يتم صرف أي مواد لك من المخزن الرئيسي بعد.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {myItems.map((item, index) => (
-              <div key={index} className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 flex justify-between items-center hover:shadow-md transition-shadow">
-                <div className="flex items-center gap-4">
-                  <div className="bg-slate-50 text-slate-400 p-3 rounded-2xl border border-slate-100 hidden sm:block">
-                    <FiLayers size={24} />
-                  </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {techInventory.filter(i => i.quantity > 0).map(item => (
+              <div key={item.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 hover:shadow-md transition-shadow relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-1 h-full bg-blue-500"></div>
+                <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h4 className="font-black text-slate-800 text-base mb-1">{item.itemName}</h4>
-                    <p className="text-xs text-slate-400 font-bold bg-slate-100 w-fit px-2 py-1 rounded-lg">{item.category}</p>
+                    <h3 className="font-black text-slate-800 text-lg mb-1">{item.itemName}</h3>
+                    <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-md">{item.category}</span>
                   </div>
-                </div>
-                <div className="bg-blue-50 border border-blue-100 px-5 py-3 rounded-2xl flex flex-col items-center justify-center min-w-[80px]">
-                  <span className="text-xs font-bold text-blue-500 mb-1">الكمية</span>
-                  <span className="text-2xl font-black text-blue-700 leading-none">{item.quantity}</span>
+                  <div className="bg-blue-50 text-blue-700 w-12 h-12 rounded-2xl flex flex-col items-center justify-center border border-blue-100">
+                    <span className="text-xs font-bold opacity-70 mb-[-4px]">العدد</span>
+                    <span className="font-black text-xl">{item.quantity}</span>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         )}
-
       </div>
 
+      {/* 🌟 نافذة الصرف الجديدة (تدعم سلة المشتريات) */}
       {isDispenseModalOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-fade-in relative max-h-[90vh]">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col animate-fade-in relative max-h-[95vh]">
             <div className="bg-slate-900 p-5 flex justify-between items-center text-white shrink-0">
-              <h2 className="text-lg font-bold flex items-center gap-2"><FiShoppingCart className="text-emerald-400"/> صرف مواد لمشترك</h2>
-              <button onClick={() => setIsDispenseModalOpen(false)} className="p-2 bg-slate-800 hover:bg-red-500 rounded-full transition-colors"><FiX /></button>
+              <h2 className="text-lg font-bold flex items-center gap-2"><FiShoppingCart className="text-blue-400"/> صرف مواد لمشترك</h2>
+              <button onClick={() => { setIsDispenseModalOpen(false); setCart([]); setDispenseCustomerName(''); setDispenseCustomerPhone(''); }} className="p-2 bg-slate-800 hover:bg-red-500 rounded-full transition-colors"><FiX /></button>
             </div>
             
-            <div className="p-6 overflow-y-auto">
-              <form onSubmit={handleDispenseSubmit} className="space-y-4">
+            <div className="p-6 overflow-y-auto custom-scrollbar">
+              
+              {/* بيانات المشترك ثابتة للفاتورة */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3 mb-5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiUser/> اسم المشترك (إجباري)</label>
+                  <input type="text" value={dispenseCustomerName} onChange={(e) => setDispenseCustomerName(e.target.value)} placeholder="الاسم الكامل" className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 focus:ring-2 focus:ring-blue-100 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiPhone/> رقم الهاتف (إجباري)</label>
+                  <input type="tel" value={dispenseCustomerPhone} onChange={(e) => setDispenseCustomerPhone(e.target.value)} placeholder="07XX XXX XXXX" dir="ltr" className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 focus:ring-2 focus:ring-blue-100 outline-none text-right" />
+                </div>
+              </div>
+
+              {/* إضافة مادة للسلة */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 mb-5 space-y-4">
+                <label className="block text-sm font-black text-slate-700 border-b pb-2 mb-2">إضافة مواد للفاتورة</label>
                 
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiUser/> اسم المشترك</label>
-                    <input type="text" required value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="الاسم الكامل" className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 focus:ring-2 focus:ring-emerald-100 outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiPhone/> رقم الهاتف</label>
-                    <input type="tel" required value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="07XX XXX XXXX" dir="ltr" className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 focus:ring-2 focus:ring-emerald-100 outline-none text-right" />
-                  </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">المادة المراد صرفها</label>
+                  <select value={selectedItemId} onChange={handleItemSelect} className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 focus:ring-2 focus:ring-blue-100 outline-none font-bold text-sm">
+                    <option value="">اختر المادة...</option>
+                    {techInventory.filter(i => i.quantity > 0).map(item => (
+                      <option key={item.id} value={item.itemId}>{item.itemName} (المتوفر: {item.quantity})</option>
+                    ))}
+                  </select>
                 </div>
 
-                <div className="space-y-3 pt-2">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1">المادة المراد صرفها</label>
-                    <select required value={selectedItemId} onChange={handleItemSelect} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 px-3 outline-none focus:ring-2 focus:ring-emerald-100 font-bold text-slate-700">
-                      <option value="">اختر المادة...</option>
-                      {myItems.map(i => (
-                        <option key={i.itemId} value={i.itemId}>
-                          {i.itemName} (المتوفر: {i.quantity})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">العدد (الكمية)</label>
-                      <input type="number" min="1" required value={dispenseQty} onChange={(e) => setDispenseQty(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 outline-none font-black text-center" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">السعر للمفرد (د.ع)</label>
-                      <input type="number" min="0" required disabled={isFree} value={itemPrice} onChange={(e) => setItemPrice(e.target.value)} className={`w-full border rounded-xl py-2.5 px-3 outline-none font-bold transition-colors ${isFree ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-slate-50 border-slate-200 focus:ring-2 focus:ring-emerald-100'}`} />
+                    <label className="block text-xs font-bold text-slate-600 mb-1">العدد (الكمية)</label>
+                    <div className="flex items-center justify-between bg-white p-1 rounded-xl border border-slate-200">
+                      <button type="button" onClick={() => setSelectedQty(Math.max(1, selectedQty - 1))} className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 hover:bg-slate-200 text-slate-600 font-bold">-</button>
+                      <span className="font-black text-slate-800">{selectedQty}</span>
+                      <button type="button" onClick={() => setSelectedQty(selectedQty + 1)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-blue-50 hover:bg-blue-200 text-blue-700 font-bold">+</button>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-2 pt-1">
-                    <button type="button" onClick={toggleFree} className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition-colors ${isFree ? 'bg-orange-50 text-orange-600 border-orange-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}>
-                      {isFree ? 'إلغاء المجاني' : 'صرف مجاني (بدون أجور)'}
-                    </button>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">السعر للمفرد (د.ع)</label>
+                    <input 
+                      type="number" 
+                      min="0" 
+                      disabled={isFree || !selectedItemId}
+                      value={customPrice} 
+                      onChange={(e) => setCustomPrice(e.target.value)} 
+                      className={`w-full border rounded-xl py-2 px-3 outline-none font-bold h-[40px] text-sm ${isFree || !selectedItemId ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-blue-200 text-blue-700 focus:ring-2 focus:ring-blue-100'}`} 
+                    />
                   </div>
                 </div>
 
-                <div className="bg-emerald-50 text-emerald-800 p-4 rounded-xl flex justify-between items-center border border-emerald-100 mt-4">
-                  <span className="font-bold">الإجمالي المطلوب:</span>
-                  <span className="font-black text-2xl">{currentTotalDispensePrice.toLocaleString()} <span className="text-sm font-bold">د.ع</span></span>
+                <div className="flex justify-between items-center pt-2">
+                  <button type="button" onClick={() => setIsFree(!isFree)} disabled={!selectedItemId} className={`px-4 py-2 rounded-xl text-xs font-bold border transition-colors ${isFree ? 'bg-orange-50 text-orange-600 border-orange-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100'} disabled:opacity-50`}>
+                    {isFree ? 'إلغاء المجاني' : 'صرف مجاني (بدون أجور)'}
+                  </button>
+                  <button type="button" onClick={handleAddToCart} disabled={!selectedItemId} className="bg-slate-800 hover:bg-black text-white px-5 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors disabled:opacity-50">
+                    <FiPlus size={16}/> إدراج بالسلة
+                  </button>
                 </div>
+              </div>
 
-                <button type="submit" disabled={isSubmitting} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md mt-2 flex items-center justify-center gap-2">
-                  {isSubmitting ? <FiRefreshCw className="animate-spin" /> : <><FiCheckCircle /> تأكيد الصرف والخصم</>}
-                </button>
-              </form>
+              {/* عرض محتويات السلة */}
+              {cart.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs font-bold text-slate-500 mb-2">محتويات الفاتورة ({cart.length}):</p>
+                  <div className="space-y-2 border border-slate-100 rounded-xl p-2 bg-slate-50/50">
+                    {cart.map((c, idx) => (
+                      <div key={idx} className="flex justify-between items-center bg-white p-2.5 rounded-lg border border-slate-200 shadow-sm">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-sm text-slate-800">{c.itemName}</span>
+                          <span className="text-[10px] text-slate-500 font-bold">
+                            {c.isFree ? <span className="text-rose-500">مجاني</span> : `${Number(c.price).toLocaleString()} د.ع للمفرد`}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">{c.qty}</span>
+                          <button type="button" onClick={() => handleRemoveFromCart(c.itemId)} className="text-red-500 hover:bg-red-50 p-1.5 rounded-md transition-colors"><FiTrash2 size={16}/></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* الإجمالي والزر النهائي */}
+              <div className="bg-emerald-50 text-emerald-800 p-4 rounded-xl flex justify-between items-center border border-emerald-100 mt-4">
+                <span className="font-bold">الإجمالي المطلوب:</span>
+                <span className="font-black text-2xl">
+                  {totalCartAmount === 0 && cart.some(c => c.isFree) ? 'مجاني' : totalCartAmount.toLocaleString()} 
+                  {totalCartAmount > 0 && <span className="text-sm font-bold mr-1">د.ع</span>}
+                </span>
+              </div>
+
+              <button type="button" onClick={handleCartSubmit} disabled={isDispensing || cart.length === 0} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md mt-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                {isDispensing ? <FiRefreshCw className="animate-spin" /> : <><FiCheckCircle /> تأكيد عملية الصرف وإرسالها للإدارة</>}
+              </button>
+
             </div>
           </div>
         </div>

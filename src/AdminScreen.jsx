@@ -78,7 +78,12 @@ export default function AdminScreen({ user, onLogout }) {
   const [sellCustomPrice, setSellCustomPrice] = useState('');
   const [isSelling, setIsSelling] = useState(false);
 
-  const [allocation, setAllocation] = useState({ itemId: '', techUsername: '', quantity: 1 });
+  const [allocTech, setAllocTech] = useState('');
+  const [allocCart, setAllocCart] = useState([]);
+  const [allocItemId, setAllocItemId] = useState('');
+  const [allocQty, setAllocQty] = useState(1);
+  const [isAllocating, setIsAllocating] = useState(false);
+
   const [newCategory, setNewCategory] = useState('');
 
   const currentUser = user?.name || "أمين المخزن";
@@ -137,6 +142,7 @@ export default function AdminScreen({ user, onLogout }) {
           
           if (amount > 0) {
             if (!groupedFinance[dateStr]) groupedFinance[dateStr] = { date: dateStr, total: 0, ticketsTotal: 0, ticketsProfit: 0, freeCost: 0, freeCount: 0, unpaidTicketsTotal: 0, manualNotes: [] };
+            
             if (ticket.is_paid === true) {
                groupedFinance[dateStr].ticketsTotal += amount;
                groupedFinance[dateStr].total += amount; 
@@ -154,25 +160,26 @@ export default function AdminScreen({ user, onLogout }) {
           const d = new Date(actualDate);
           if (isNaN(d.getTime())) return;
           const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          
           const amount = Number(entry.amount) || 0;
-          const isPaid = entry.is_paid !== false;
+          const isFreeCheck = amount === 0 && entry.note && entry.note.includes('(مجاني)');
+          const isPaid = isFreeCheck ? true : (entry.is_paid !== false);
           
           if (!groupedFinance[dateStr]) groupedFinance[dateStr] = { date: dateStr, total: 0, ticketsTotal: 0, ticketsProfit: 0, freeCost: 0, freeCount: 0, unpaidTicketsTotal: 0, manualNotes: [] };
           
-          if (isPaid) {
+          if (isPaid && !isFreeCheck) {
             groupedFinance[dateStr].total += amount;
           }
 
           let itemProfit = 0;
           let itemFreeCost = 0;
-          let isFree = false;
+          let isFree = isFreeCheck;
 
           if (entry.note && entry.note.includes('بيع مباشر (مواد)')) {
             const parts = entry.note.split('|').map(p => p.trim());
             const itemNameMatch = parts[0].replace('بيع مباشر (مواد):', '').trim();
             const qtyStr = parts.find(p => p.includes('العدد:')) || '';
             const qty = Number(qtyStr.replace('العدد:', '').trim()) || 1;
-            isFree = amount === 0 && entry.note.includes('(مجاني)');
 
             const matchedItem = mainData.find(i => i.name === itemNameMatch);
             if (matchedItem) {
@@ -239,8 +246,9 @@ export default function AdminScreen({ user, onLogout }) {
   }, []);
 
   const salesList = useMemo(() => {
-    let list = [];
+    let rawList = [];
 
+    // استخراج الحركات الخام أولاً
     rawManualEntries.forEach(entry => {
       if (entry.note && entry.note.includes('بيع مباشر (مواد)')) {
         const parts = entry.note.split('|').map(p => p.trim());
@@ -251,7 +259,7 @@ export default function AdminScreen({ user, onLogout }) {
         const buyerInfo = buyerPart.replace('المشتري:', '').trim();
 
         const sellPrice = Number(entry.amount) || 0;
-        const isFree = sellPrice === 0 && entry.note.includes('(مجاني)');
+        const isFree = sellPrice === 0 && entry.note && entry.note.includes('(مجاني)');
         
         const matchedItem = mainItems.find(i => i.name === itemName);
         const wholesalePrice = matchedItem ? Number(matchedItem.wholesalePrice) * qty : 0;
@@ -278,7 +286,7 @@ export default function AdminScreen({ user, onLogout }) {
         const receiverPart = parts.find(p => p.includes('المستلم:')) || '';
         const receiverInfo = receiverPart.replace('المستلم:', '').trim();
 
-        list.push({
+        rawList.push({
           id: entry.id,
           source: 'manual',
           date: actualDate,
@@ -293,7 +301,7 @@ export default function AdminScreen({ user, onLogout }) {
           profit: profit,
           wholesaleCost: freeCost,
           profitKnown: !!matchedItem,
-          isPaid: entry.is_paid !== false,
+          isPaid: isFree ? true : (entry.is_paid !== false),
           receiverInfo: receiverInfo
         });
       }
@@ -308,7 +316,7 @@ export default function AdminScreen({ user, onLogout }) {
         const techObj = allUsers.find(u => u.username === t.technician);
         if (techObj) techName = techObj.name;
 
-        list.push({
+        rawList.push({
           id: t.id,
           source: 'ticket',
           date: actualDate,
@@ -329,7 +337,70 @@ export default function AdminScreen({ user, onLogout }) {
       }
     });
 
-    return list.sort((a, b) => new Date(b.date) - new Date(a.date));
+    // 🌟 خوارزمية الدمج (Grouping) لتحويل مشتريات نفس الزبون في نفس الوقت لصف واحد
+    const groupedMap = new Map();
+    
+    rawList.forEach(sale => {
+      if (sale.source === 'manual') {
+        // المفتاح: الوقت (للدقيقة) + البائع + المشترك + حالة الدفع
+        const key = `${sale.displayDate}_${sale.seller}_${sale.buyer}_${sale.isPaid}`;
+        
+        if (groupedMap.has(key)) {
+          const existing = groupedMap.get(key);
+          existing.ids.push(sale.id); // إضافة المعرف ليتم تحديثهم سوياً
+          existing.items.push({
+            itemName: sale.itemName,
+            quantity: sale.quantity,
+            sellPrice: sale.sellPrice,
+            isFree: sale.isFree,
+            profit: sale.profit,
+            wholesaleCost: sale.wholesaleCost,
+            profitKnown: sale.profitKnown
+          });
+          existing.sellPrice += sale.sellPrice;
+          existing.profit += sale.profit;
+          existing.wholesaleCost += sale.wholesaleCost;
+          
+          let q1 = isNaN(Number(existing.quantity)) ? 0 : Number(existing.quantity);
+          let q2 = isNaN(Number(sale.quantity)) ? 0 : Number(sale.quantity);
+          existing.quantity = q1 + q2;
+
+          if (!sale.isFree) existing.isFree = false; 
+          if (!sale.profitKnown) existing.profitKnown = false;
+        } else {
+          groupedMap.set(key, {
+            ...sale,
+            ids: [sale.id],
+            items: [{
+              itemName: sale.itemName,
+              quantity: sale.quantity,
+              sellPrice: sale.sellPrice,
+              isFree: sale.isFree,
+              profit: sale.profit,
+              wholesaleCost: sale.wholesaleCost,
+              profitKnown: sale.profitKnown
+            }]
+          });
+        }
+      } else {
+        // التذاكر تبقى كل تذكرة على حدة
+        groupedMap.set(`ticket_${sale.id}`, {
+          ...sale,
+          ids: [sale.id],
+          items: [{
+            itemName: sale.itemName,
+            quantity: sale.quantity,
+            sellPrice: sale.sellPrice,
+            isFree: sale.isFree,
+            profit: sale.profit,
+            wholesaleCost: sale.wholesaleCost,
+            profitKnown: sale.profitKnown
+          }]
+        });
+      }
+    });
+
+    return Array.from(groupedMap.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
   }, [rawManualEntries, rawTickets, mainItems, allUsers]);
 
   const uniqueSellers = useMemo(() => {
@@ -369,39 +440,42 @@ export default function AdminScreen({ user, onLogout }) {
     return list;
   }, [salesList, salesFilterTech, salesStartDate, salesEndDate, salesSearchQuery]);
 
-  const totalSalesAmount = filteredSalesList.reduce((sum, item) => sum + (item.isPaid ? item.sellPrice : 0), 0);
-  const totalProfitAmount = filteredSalesList.reduce((sum, item) => sum + (item.isPaid ? item.profit : 0), 0);
-  const totalFreeCostAmount = filteredSalesList.reduce((sum, item) => sum + ((item.isPaid && item.isFree) ? (item.wholesaleCost || 0) : 0), 0);
-  const totalFreeQty = filteredSalesList.reduce((sum, item) => sum + ((item.isPaid && item.isFree) ? item.quantity : 0), 0);
-  const totalPendingAmount = filteredSalesList.reduce((sum, item) => sum + (!item.isPaid && !item.isFree ? item.sellPrice : 0), 0);
+  // 🌟 تحديث حسابات الفوتر لتقرأ من مصفوفة العناصر المدمجة لضمان دقة 100%
+  const totalSalesAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && !it.isFree ? it.sellPrice : 0), 0), 0);
+  const totalProfitAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && !it.isFree ? it.profit : 0), 0), 0);
+  const totalFreeCostAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && it.isFree ? (it.wholesaleCost || 0) : 0), 0), 0);
+  const totalFreeQty = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && it.isFree ? (Number(it.quantity) || 0) : 0), 0), 0);
+  const totalPendingAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (!group.isPaid && !it.isFree ? it.sellPrice : 0), 0), 0);
 
+  // 🌟 تعديل الدالة لتحديث كل العناصر المدمجة بضغطة زر واحدة
   const togglePaymentStatus = async (sale) => {
     const newStatus = !sale.isPaid;
     const receiverInfoStr = newStatus ? ` | المستلم: ${user?.name} (${getLocalTodayDate()})` : '';
 
     try {
       if (sale.source === 'manual') {
-        const entry = rawManualEntries.find(e => e.id === sale.id);
-        if (!entry) return;
-        
-        let updatedNote = entry.note;
-        if (newStatus) {
-           updatedNote += receiverInfoStr;
-        } else {
-           updatedNote = updatedNote.split(' | المستلم:')[0];
-        }
-
-        await supabase.from('safe_manual_entries').update({ 
-          is_paid: newStatus,
-          note: updatedNote
-        }).eq('id', sale.id);
+        const promises = sale.ids.map(async (singleId) => {
+          const entry = rawManualEntries.find(e => e.id === singleId);
+          if (!entry) return;
+          let updatedNote = entry.note;
+          if (newStatus) {
+             updatedNote += receiverInfoStr;
+          } else {
+             updatedNote = updatedNote.split(' | المستلم:')[0];
+          }
+          return supabase.from('safe_manual_entries').update({ 
+            is_paid: newStatus,
+            note: updatedNote
+          }).eq('id', singleId);
+        });
+        await Promise.all(promises);
 
       } else if (sale.source === 'ticket') {
         await supabase.from('tickets').update({ 
           is_paid: newStatus,
           payment_receiver: newStatus ? user?.name : null,
           payment_date: newStatus ? new Date().toISOString() : null
-        }).eq('id', sale.id);
+        }).eq('id', sale.ids[0]);
       }
       
       showMsg(newStatus ? '✅ تم استلام المبلغ بنجاح!' : '⚠️ تم إرجاع العملية لحالة غير مستلم.');
@@ -636,10 +710,78 @@ export default function AdminScreen({ user, onLogout }) {
     }
   };
 
-  const handleAllocate = async (e) => {
+  const handleAddAllocItem = (e) => {
     e.preventDefault();
-    await updateTechInventory(allocation.techUsername, allocation.itemId, Number(allocation.quantity), 'add');
-    setAllocation({ itemId: '', techUsername: '', quantity: 1 });
+    if (!allocItemId || allocQty < 1) return;
+    
+    const item = mainItems.find(i => String(i.id) === String(allocItemId));
+    if (!item) return;
+
+    const existingItem = allocCart.find(i => String(i.itemId) === String(allocItemId));
+    const totalWanted = existingItem ? existingItem.quantity + Number(allocQty) : Number(allocQty);
+
+    if (totalWanted > Number(item.quantity)) {
+      alert(`عذراً! لا يمكن إضافة ${totalWanted} قطعة من ${item.name}. المتوفر في المخزن هو ${item.quantity} فقط.`);
+      return;
+    }
+
+    if (existingItem) {
+      setAllocCart(allocCart.map(i => String(i.itemId) === String(allocItemId) ? { ...i, quantity: i.quantity + Number(allocQty) } : i));
+    } else {
+      setAllocCart([...allocCart, { itemId: item.id, itemName: item.name, quantity: Number(allocQty), category: item.category }]);
+    }
+
+    setAllocItemId('');
+    setAllocQty(1);
+  };
+
+  const handleRemoveAllocItem = (itemId) => {
+    setAllocCart(allocCart.filter(i => String(i.itemId) !== String(itemId)));
+  };
+
+  const handleBulkAllocate = async () => {
+    if (!allocTech) {
+      alert("يرجى اختيار الفني المستلم أولاً!");
+      return;
+    }
+    if (allocCart.length === 0) {
+      alert("يرجى إضافة مواد إلى قائمة الصرف أولاً!");
+      return;
+    }
+    
+    setIsAllocating(true);
+    try {
+      const tech = techs.find(t => String(t.username) === String(allocTech));
+      if (!tech) throw new Error("بيانات الفني غير متوفرة.");
+
+      for (const cartItem of allocCart) {
+        const item = mainItems.find(i => String(i.id) === String(cartItem.itemId));
+        if (!item || Number(item.quantity) < cartItem.quantity) {
+          alert(`المادة "${cartItem.itemName}" لم تعد متوفرة بالكمية المطلوبة في المخزن!`);
+          setIsAllocating(false);
+          return;
+        }
+      }
+
+      for (const cartItem of allocCart) {
+        const item = mainItems.find(i => String(i.id) === String(cartItem.itemId));
+        const existingTechItem = techItems.find(ti => String(ti.techUsername) === String(allocTech) && String(ti.itemId) === String(cartItem.itemId));
+        
+        await supabase.from('inventory_main').update({ quantity: Number(item.quantity) - cartItem.quantity }).eq('id', item.id);
+        
+        if (existingTechItem) {
+          await supabase.from('inventory_techs').update({ quantity: Number(existingTechItem.quantity) + cartItem.quantity, lastUpdated: new Date() }).eq('id', existingTechItem.id);
+        } else {
+          await supabase.from('inventory_techs').insert([{ techUsername: tech.username, techName: tech.name, itemId: item.id, itemName: item.name, category: item.category, quantity: cartItem.quantity, lastUpdated: new Date() }]);
+        }
+      }
+      
+      showMsg(`✅ تم صرف ${allocCart.length} مواد إلى عهدة ${tech.name} بنجاح.`);
+      setAllocCart([]); 
+    } catch (err) {
+      alert("حدث خطأ أثناء الصرف: " + err.message);
+    }
+    setIsAllocating(false);
   };
 
   const updateTechInventory = async (techUsername, itemId, changeQty, action = 'add') => {
@@ -661,7 +803,7 @@ export default function AdminScreen({ user, onLogout }) {
       } else {
         await supabase.from('inventory_techs').insert([{ techUsername: tech.username, techName: tech.name, itemId: item.id, itemName: item.name, category: item.category, quantity: changeQty, lastUpdated: new Date() }]);
       }
-      showMsg(`تم إضافة ${changeQty} إلى عهدة ${tech.name}`);
+      showMsg(`تم إضافة قطعة إلى عهدة ${tech.name}`);
 
     } else if (action === 'remove') {
       if (!existingTechItem || Number(existingTechItem.quantity) < changeQty) {
@@ -675,7 +817,7 @@ export default function AdminScreen({ user, onLogout }) {
       } else {
         await supabase.from('inventory_techs').update({ quantity: newTechQty, lastUpdated: new Date() }).eq('id', existingTechItem.id);
       }
-      showMsg(`تم سحب ${changeQty} من عهدة ${tech.name} وإعادتها للمخزن`);
+      showMsg(`تم سحب قطعة من عهدة ${tech.name} وإعادتها للمخزن`);
     }
   };
 
@@ -719,7 +861,6 @@ export default function AdminScreen({ user, onLogout }) {
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10 font-sans" dir="rtl">
       
-      {/* 🌟 نافذة التنبيهات العائمة التي حلت مشكلة دفع الجداول (Layout Shift) */}
       {msg && (
         <div className={`fixed top-10 left-1/2 -translate-x-1/2 z-[9999] px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in min-w-[320px] max-w-[90%] border-r-4 ${msg.includes('⚠️') ? 'bg-amber-50 border-amber-500' : 'bg-emerald-50 border-emerald-500'}`}>
           {msg.includes('⚠️') ? <FiAlertCircle className="text-amber-500 shrink-0" size={24} /> : <FiCheckCircle className="text-emerald-500 shrink-0" size={24} />}
@@ -888,29 +1029,58 @@ export default function AdminScreen({ user, onLogout }) {
             {activeTab === 'techs' && (
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 animate-fade-in">
                 <div className="xl:col-span-1">
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative">
                     <h3 className="font-bold text-slate-800 mb-5 flex items-center gap-2"><FiTool className="text-blue-600"/> صرف عهدة لفني</h3>
-                    <form onSubmit={handleAllocate} className="space-y-4">
+                    
+                    <div className="space-y-4">
                       <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">الفني المستلم</label>
-                        <select required value={allocation.techUsername} onChange={(e)=>setAllocation({...allocation, techUsername: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none">
+                        <select value={allocTech} onChange={(e)=>setAllocTech(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none focus:ring-2 focus:ring-blue-100 transition-all">
                           <option value="">اختر الفني...</option>
                           {techs.map(t => <option key={t.id} value={t.username}>{t.name} (@{t.username})</option>)}
                         </select>
                       </div>
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">المادة المراد صرفها</label>
-                        <select required value={allocation.itemId} onChange={(e)=>setAllocation({...allocation, itemId: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none">
-                          <option value="">اختر المادة...</option>
-                          {mainItems.filter(i => i.quantity > 0).map(i => <option key={i.id} value={i.id}>{i.name} (باقي: {i.quantity})</option>)}
-                        </select>
+                      
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                        <label className="block text-xs font-bold text-slate-700">إضافة مواد للقائمة</label>
+                        <div className="flex flex-col gap-3">
+                           <select value={allocItemId} onChange={(e)=>setAllocItemId(e.target.value)} className="w-full border border-slate-200 rounded-lg py-2 px-2 text-sm outline-none focus:ring-2 focus:ring-blue-100 bg-white">
+                              <option value="">اختر المادة...</option>
+                              {mainItems.filter(i => i.quantity > 0).map(i => <option key={i.id} value={i.id}>{i.name} (باقي: {i.quantity})</option>)}
+                           </select>
+                           <div className="flex gap-2">
+                              <input type="number" min="1" value={allocQty} onChange={(e)=>setAllocQty(e.target.value)} className="w-20 border border-slate-200 rounded-lg py-2 px-2 text-center text-sm outline-none focus:ring-2 focus:ring-blue-100 bg-white" placeholder="العدد" />
+                              <button onClick={handleAddAllocItem} className="flex-1 bg-blue-100 text-blue-700 font-bold rounded-lg py-2 text-sm hover:bg-blue-200 transition-colors flex justify-center items-center gap-1 shadow-sm">
+                                <FiPlus/> إدراج في القائمة
+                              </button>
+                           </div>
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">الكمية المصروفة</label>
-                        <input type="number" min="1" required value={allocation.quantity} onChange={(e)=>setAllocation({...allocation, quantity: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none" />
-                      </div>
-                      <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl mt-2 transition-colors">تأكيد الصرف</button>
-                    </form>
+
+                      {allocCart.length > 0 && (
+                         <div className="space-y-2 animate-fade-in mt-4">
+                           <div className="flex justify-between items-center mb-1">
+                             <p className="text-xs font-bold text-slate-500">سلة المواد ({allocCart.length}):</p>
+                             <button onClick={() => setAllocCart([])} className="text-xs text-red-500 hover:text-red-700 font-bold px-2 py-1 bg-red-50 rounded-lg">تفريغ السلة</button>
+                           </div>
+                           <div className="max-h-40 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                              {allocCart.map((cartItem, idx) => (
+                                 <div key={idx} className="flex justify-between items-center bg-white border border-slate-200 p-2.5 rounded-lg text-sm shadow-sm">
+                                    <span className="font-bold text-slate-800">{cartItem.itemName}</span>
+                                    <div className="flex items-center gap-3">
+                                       <span className="font-black text-blue-700 px-2 py-0.5 bg-blue-50 border border-blue-100 rounded-md">{cartItem.quantity}</span>
+                                       <button onClick={() => handleRemoveAllocItem(cartItem.itemId)} className="text-red-500 hover:bg-red-100 p-1.5 rounded-md transition-colors"><FiTrash2 size={14}/></button>
+                                    </div>
+                                 </div>
+                              ))}
+                           </div>
+                         </div>
+                      )}
+
+                      <button onClick={handleBulkAllocate} disabled={isAllocating || !allocTech || allocCart.length === 0} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl mt-4 transition-all shadow-md disabled:opacity-50 flex justify-center items-center gap-2">
+                         {isAllocating ? <FiRefreshCw className="animate-spin" /> : <><FiCheckCircle/> تأكيد صرف القائمة</>}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1121,6 +1291,7 @@ export default function AdminScreen({ user, onLogout }) {
               </div>
             )}
 
+            {/* 🌟 واجهة المبيعات مع ميزة الفواتير المدمجة */}
             {activeTab === 'sales' && (
               <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden animate-fade-in max-w-6xl mx-auto">
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-orange-50/30">
@@ -1130,7 +1301,7 @@ export default function AdminScreen({ user, onLogout }) {
                       <FiAlertCircle /> مبالغ غير مستلمة: {totalPendingAmount.toLocaleString()} د.ع
                     </div>
                     <div className="bg-white px-4 py-2 rounded-xl text-sm font-bold text-slate-600 border border-slate-200">
-                      إجمالي الحركات: {filteredSalesList.length}
+                      إجمالي الفواتير: {filteredSalesList.length}
                     </div>
                   </div>
                 </div>
@@ -1184,10 +1355,10 @@ export default function AdminScreen({ user, onLogout }) {
                       <tr>
                         <th className="p-4 font-bold">التاريخ والوقت</th>
                         <th className="p-4 font-bold">بواسطة (البائع)</th>
-                        <th className="p-4 font-bold">المادة وبيانات المشترك</th>
+                        <th className="p-4 font-bold">المواد وبيانات المشترك</th>
                         <th className="p-4 font-bold text-center">الكمية</th>
-                        <th className="p-4 font-bold text-emerald-700 bg-emerald-50 text-center">مبلغ البيع</th>
-                        <th className="p-4 font-bold text-blue-700 bg-blue-50 text-center">الربح الصافي</th>
+                        <th className="p-4 font-bold text-emerald-700 bg-emerald-50 text-center">إجمالي مبلغ البيع</th>
+                        <th className="p-4 font-bold text-blue-700 bg-blue-50 text-center">إجمالي الربح الصافي</th>
                         <th className="p-4 font-bold text-center">حالة الاستلام</th>
                       </tr>
                     </thead>
@@ -1195,63 +1366,85 @@ export default function AdminScreen({ user, onLogout }) {
                       {filteredSalesList.length === 0 ? (
                         <tr><td colSpan="7" className="p-8 text-center text-slate-400 font-bold">لا توجد حركات مطابقة للبحث.</td></tr>
                       ) : (
-                        filteredSalesList.map((sale) => (
-                          <tr key={sale.id} className={`transition-colors ${!sale.isPaid && !sale.isFree ? 'bg-amber-50/30 hover:bg-amber-50' : 'hover:bg-slate-50'}`}>
-                            <td className="p-4 font-bold text-slate-700 text-xs" dir="ltr">{sale.displayDate}</td>
-                            <td className="p-4 font-bold text-slate-800">
-                              <div className="flex items-center gap-2">
-                                <div className={`p-1.5 rounded-md ${sale.sellerType === 'office' ? 'bg-emerald-100 text-emerald-600' : 'bg-orange-100 text-orange-600'}`}>
-                                  <FiUser size={14} />
-                                </div>
-                                {sale.seller}
-                              </div>
-                            </td>
-                            <td className="p-4">
-                              <div className="font-bold text-slate-800">{sale.itemName}</div>
-                              <div className="text-xs text-slate-500 mt-0.5 bg-slate-50 p-1 rounded w-fit border border-slate-100">
-                                👤 <span className="font-bold text-slate-700">{sale.buyer}</span>
-                              </div>
-                            </td>
-                            <td className="p-4 text-center font-black text-slate-600">{sale.quantity}</td>
-                            
-                            <td className={`p-4 text-center font-black ${sale.isFree ? 'bg-slate-50/50 text-rose-500' : !sale.isPaid ? 'bg-amber-50 text-amber-700' : 'text-emerald-600 bg-emerald-50/30'}`}>
-                              {sale.isFree ? <span className="bg-rose-100 text-rose-700 px-2.5 py-1 rounded-lg text-xs font-black">مجاني</span> : `${sale.sellPrice.toLocaleString()} د.ع`}
-                            </td>
+                        filteredSalesList.map((sale, groupIdx) => {
+                           const isMixedTransaction = sale.items.some(i => i.isFree) && sale.items.some(i => !i.isFree);
 
-                            <td className={`p-4 text-center font-black ${sale.isFree ? 'bg-slate-50/30' : !sale.isPaid ? 'bg-amber-50/50 text-slate-400' : sale.profit > 0 ? 'text-blue-600 bg-blue-50/30' : sale.profit < 0 ? 'text-red-500 bg-red-50/30' : 'text-slate-600 bg-slate-50/30'}`}>
-                              {sale.isFree ? (
-                                <div className="text-rose-600 text-[10px] leading-tight font-bold">
-                                  <span>تكلفة المجاني:</span><br/>
-                                  <span>-{sale.wholesaleCost.toLocaleString()} د.ع</span>
-                                </div>
-                              ) : !sale.isPaid ? (
-                                <span className="text-xs">معلق</span>
-                              ) : sale.profitKnown ? (
-                                <span>{sale.profit > 0 ? '+' : ''}{sale.profit.toLocaleString()} د.ع</span>
-                              ) : (
-                                <span className="text-xs text-slate-400">غير محدد</span>
-                              )}
-                            </td>
+                           return (
+                             <tr key={groupIdx} className={`transition-colors ${!sale.isPaid && !sale.isFree ? 'bg-amber-50/30 hover:bg-amber-50' : 'hover:bg-slate-50'}`}>
+                               <td className="p-4 font-bold text-slate-700 text-xs" dir="ltr">{sale.displayDate}</td>
+                               <td className="p-4 font-bold text-slate-800">
+                                 <div className="flex items-center gap-2">
+                                   <div className={`p-1.5 rounded-md ${sale.sellerType === 'office' ? 'bg-emerald-100 text-emerald-600' : 'bg-orange-100 text-orange-600'}`}>
+                                     <FiUser size={14} />
+                                   </div>
+                                   {sale.seller}
+                                 </div>
+                               </td>
+                               
+                               {/* 🌟 عرض المواد المدمجة */}
+                               <td className="p-4">
+                                 <div className="flex flex-col gap-1.5 mb-2">
+                                   {sale.items.map((it, idx) => (
+                                     <div key={idx} className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                                       <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span> 
+                                       {it.itemName}
+                                       {it.isFree && <span className="text-[10px] bg-rose-100 text-rose-600 px-1.5 py-0.5 rounded font-black">مجاني</span>}
+                                     </div>
+                                   ))}
+                                 </div>
+                                 <div className="text-xs text-slate-500 mt-0.5 bg-slate-50 p-1.5 rounded-lg w-fit border border-slate-100 flex items-center gap-1.5 shadow-sm">
+                                   <FiUser size={12}/> <span className="font-bold text-slate-700">{sale.buyer}</span>
+                                 </div>
+                               </td>
 
-                            <td className="p-4 text-center">
-                              {sale.isFree ? (
-                                <span className="text-xs font-bold text-slate-400">لا ينطبق</span>
-                              ) : (
-                                <div className="flex flex-col items-center gap-1">
-                                  <button 
-                                    onClick={() => togglePaymentStatus(sale)}
-                                    className={`px-4 py-1.5 rounded-xl text-xs font-black transition-all shadow-sm border ${sale.isPaid ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200' : 'bg-white text-slate-600 border-slate-300 hover:bg-emerald-600 hover:text-white hover:border-emerald-600'}`}
-                                  >
-                                    {sale.isPaid ? '✔️ مستلم' : '⏳ غير مستلم'}
-                                  </button>
-                                  {sale.isPaid && sale.receiverInfo && (
-                                    <span className="text-[10px] text-slate-400 font-bold leading-tight max-w-[120px]" title={sale.receiverInfo}>استلم: {sale.receiverInfo.split('(')[0]}</span>
-                                  )}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        ))
+                               {/* 🌟 عرض الكميات المدمجة بالترتيب */}
+                               <td className="p-4 text-center font-black text-slate-600">
+                                 <div className="flex flex-col gap-1.5">
+                                   {sale.items.map((it, idx) => (
+                                     <div key={idx} className="text-sm">{it.quantity}</div>
+                                   ))}
+                                 </div>
+                               </td>
+                               
+                               <td className={`p-4 text-center font-black ${sale.isFree && !isMixedTransaction ? 'bg-slate-50/50 text-rose-500' : !sale.isPaid ? 'bg-amber-50 text-amber-700' : 'text-emerald-600 bg-emerald-50/30'}`}>
+                                 {sale.isFree && !isMixedTransaction ? <span className="bg-rose-100 text-rose-700 px-2.5 py-1 rounded-lg text-xs font-black">مجاني بالكامل</span> : `${sale.sellPrice.toLocaleString()} د.ع`}
+                               </td>
+
+                               <td className={`p-4 text-center font-black ${sale.isFree && !isMixedTransaction ? 'bg-slate-50/30' : !sale.isPaid ? 'bg-amber-50/50 text-slate-400' : sale.profit > 0 ? 'text-blue-600 bg-blue-50/30' : sale.profit < 0 ? 'text-red-500 bg-red-50/30' : 'text-slate-600 bg-slate-50/30'}`}>
+                                 {sale.isFree && !isMixedTransaction ? (
+                                   <div className="text-rose-600 text-[10px] leading-tight font-bold">
+                                     <span>تكلفة المجاني (الكل):</span><br/>
+                                     <span>-{sale.wholesaleCost.toLocaleString()} د.ع</span>
+                                   </div>
+                                 ) : !sale.isPaid ? (
+                                   <span className="text-xs">معلق</span>
+                                 ) : sale.profitKnown ? (
+                                   <span>{sale.profit > 0 ? '+' : ''}{sale.profit.toLocaleString()} د.ع</span>
+                                 ) : (
+                                   <span className="text-xs text-slate-400">غير محدد</span>
+                                 )}
+                               </td>
+
+                               <td className="p-4 text-center">
+                                 {sale.isFree && !isMixedTransaction ? (
+                                   <span className="text-xs font-bold text-slate-400">لا ينطبق</span>
+                                 ) : (
+                                   <div className="flex flex-col items-center gap-1">
+                                     <button 
+                                       onClick={() => togglePaymentStatus(sale)}
+                                       className={`px-4 py-1.5 rounded-xl text-xs font-black transition-all shadow-sm border ${sale.isPaid ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200' : 'bg-white text-slate-600 border-slate-300 hover:bg-emerald-600 hover:text-white hover:border-emerald-600'}`}
+                                     >
+                                       {sale.isPaid ? '✔️ مستلم' : '⏳ غير مستلم'}
+                                     </button>
+                                     {sale.isPaid && sale.receiverInfo && (
+                                       <span className="text-[10px] text-slate-400 font-bold leading-tight max-w-[120px]" title={sale.receiverInfo}>استلم: {sale.receiverInfo.split('(')[0]}</span>
+                                     )}
+                                   </div>
+                                 )}
+                               </td>
+                             </tr>
+                           );
+                        })
                       )}
                     </tbody>
                     {filteredSalesList.length > 0 && (
@@ -1298,7 +1491,8 @@ export default function AdminScreen({ user, onLogout }) {
                 <p className="text-slate-500 text-xs font-bold mb-1">المادة المطلوبة:</p>
                 <p className="text-lg font-black text-slate-800">{sellItemData.name}</p>
                 <div className="flex justify-between mt-2">
-                  <span className="text-sm font-bold text-slate-500">متوفر: {sellItemData.quantity}</span>
+                  <span className="text-sm font-bold text-emerald-600">السعر: {sellItemData.customerPrice.toLocaleString()} د.ع</span>
+                  <span className="text-sm font-bold text-blue-600">متوفر: {sellItemData.quantity}</span>
                 </div>
               </div>
 
