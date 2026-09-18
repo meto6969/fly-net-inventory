@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import { openDB } from 'idb';
-import { FiBox, FiLogOut, FiShoppingCart, FiX, FiCheckCircle, FiAlertCircle, FiWifiOff, FiRefreshCw, FiPlus, FiTrash2, FiUser, FiPhone, FiDollarSign } from 'react-icons/fi';
+import { FiBox, FiLogOut, FiShoppingCart, FiX, FiCheckCircle, FiAlertCircle, FiWifiOff, FiRefreshCw, FiPlus, FiTrash2, FiUser, FiPhone, FiDollarSign, FiPrinter } from 'react-icons/fi';
 
 const getLocalTodayDate = () => {
   const d = new Date();
@@ -9,6 +9,13 @@ const getLocalTodayDate = () => {
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+const formatDate = (dateString) => {
+  if (!dateString) return '';
+  const d = new Date(dateString);
+  if (isNaN(d.getTime())) return String(dateString);
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 
 // تهيئة قاعدة البيانات المحلية للأوفلاين
@@ -35,9 +42,12 @@ export default function TechScreen({ user, onLogout }) {
   const [isDispenseModalOpen, setIsDispenseModalOpen] = useState(false);
   const [dispenseCustomerName, setDispenseCustomerName] = useState('');
   const [dispenseCustomerPhone, setDispenseCustomerPhone] = useState('');
-  // 🌟 حقل أجور الاشتراك الجديد
   const [subscriptionFee, setSubscriptionFee] = useState(''); 
   
+  // 🌟 قائمة البائعين الجديدة
+  const sellerOptions = ['حسن زهير', 'مصطفى', 'زينب', 'فاطمة'];
+  const [selectedSeller, setSelectedSeller] = useState('');
+
   // حالات إضافة مادة واحدة للسلة
   const [cart, setCart] = useState([]);
   const [selectedItemId, setSelectedItemId] = useState('');
@@ -45,6 +55,9 @@ export default function TechScreen({ user, onLogout }) {
   const [customPrice, setCustomPrice] = useState('');
   const [isFree, setIsFree] = useState(false);
   const [isDispensing, setIsDispensing] = useState(false);
+
+  // حالة بيانات الطباعة
+  const [printData, setPrintData] = useState(null);
 
   const showMsg = (text) => {
     setMsg(text);
@@ -217,13 +230,53 @@ export default function TechScreen({ user, onLogout }) {
     setCart(cart.filter(c => String(c.itemId) !== String(itemId)));
   };
 
+  // 🌟 دالة للطباعة فقط (لا تحفظ في المخزن)
+  const handlePrintOnly = () => {
+    const subFeeNum = Number(subscriptionFee) || 0;
+    const totalMaterialsPrice = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+    
+    if (cart.length === 0 && subFeeNum === 0) {
+      alert("الفاتورة فارغة! يرجى إضافة مواد أو أجور اشتراك للطباعة.");
+      return;
+    }
+
+    const invoiceNum = Math.floor(100000 + Math.random() * 900000);
+
+    // التحقق من البائع: إما من القائمة (إذا كان shop) أو اسم المستخدم الحالي
+    const finalSeller = user?.username === 'shop' ? (selectedSeller || 'غير محدد') : (user?.name || 'غير محدد');
+
+    setPrintData({
+      invoiceNumber: invoiceNum,
+      displayDate: formatDate(new Date().toISOString()),
+      seller: finalSeller,
+      buyer: `${dispenseCustomerName || 'زبون نقدي'} - ${dispenseCustomerPhone || '-'}`,
+      items: cart.map(c => ({
+        itemName: c.itemName,
+        quantity: c.qty,
+        sellPrice: c.price,
+        isFree: c.isFree,
+      })),
+      subscriptionPrice: subFeeNum,
+      materialsPrice: totalMaterialsPrice
+    });
+
+    setTimeout(() => window.print(), 300);
+  };
+
+  // 🌟 دالة للحفظ والتأكيد فقط
   const handleCartSubmit = async (e) => {
     e.preventDefault();
     if (!dispenseCustomerName || !dispenseCustomerPhone) {
-      alert("يرجى إدخال اسم المشترك ورقم هاتفه.");
+      alert("يرجى إدخال اسم المشترك ورقم هاتفه أولاً.");
       return;
     }
-    // 🌟 السماح بإرسال الفاتورة إذا كان فيها مواد أو إذا كان فيها أجور اشتراك فقط
+    
+    // التحقق من اختيار البائع إذا كان الحساب shop
+    if (user?.username === 'shop' && !selectedSeller) {
+      alert("يرجى اختيار اسم البائع من القائمة.");
+      return;
+    }
+    
     const subFeeNum = Number(subscriptionFee) || 0;
     if (cart.length === 0 && subFeeNum === 0) {
       alert("الفاتورة فارغة! يرجى إضافة مواد أو أجور اشتراك.");
@@ -235,10 +288,11 @@ export default function TechScreen({ user, onLogout }) {
     let currentOfflineStatus = !navigator.onLine;
     const exactTimestamp = new Date().toISOString(); 
 
+    const finalSeller = user?.username === 'shop' ? selectedSeller : user?.name;
+
     try {
-      // 1. إرسال أجور الاشتراك كحركة منفصلة (إن وُجدت) لتندمج مع الفاتورة
       if (subFeeNum > 0) {
-        const subNoteStr = `أجور اشتراك | المشتري: ${dispenseCustomerName} - ${dispenseCustomerPhone}`;
+        const subNoteStr = `أجور اشتراك | المشتري: ${dispenseCustomerName} - ${dispenseCustomerPhone} | البائع: ${finalSeller}`;
         
         if (currentOfflineStatus) {
           await saveToQueue({
@@ -256,11 +310,10 @@ export default function TechScreen({ user, onLogout }) {
         }
       }
 
-      // 2. إرسال المواد (إن وُجدت)
       for (const cartItem of cart) {
         const totalPrice = cartItem.price * cartItem.qty;
         const freeLabel = cartItem.isFree ? ' (مجاني)' : '';
-        const noteStr = `بيع مباشر (مواد): ${cartItem.itemName} | العدد: ${cartItem.qty} | المشتري: ${dispenseCustomerName} - ${dispenseCustomerPhone}${freeLabel}`;
+        const noteStr = `بيع مباشر (مواد): ${cartItem.itemName} | العدد: ${cartItem.qty} | المشتري: ${dispenseCustomerName} - ${dispenseCustomerPhone}${freeLabel} | البائع: ${finalSeller}`;
 
         if (currentOfflineStatus) {
           await saveToQueue({
@@ -290,12 +343,13 @@ export default function TechScreen({ user, onLogout }) {
         }
       }
 
-      showMsg(currentOfflineStatus ? '⚠️ تم الحفظ محلياً (لا يوجد إنترنت). ستتم المزامنة لاحقاً.' : '✅ تمت عملية صرف المواد والاشتراك بنجاح!');
+      showMsg(currentOfflineStatus ? '⚠️ تم الحفظ محلياً (لا يوجد إنترنت).' : '✅ تمت عملية الصرف بنجاح!');
       setIsDispenseModalOpen(false);
       setCart([]);
       setDispenseCustomerName('');
       setDispenseCustomerPhone('');
       setSubscriptionFee('');
+      setSelectedSeller('');
       if (!currentOfflineStatus) fetchData();
 
     } catch (err) {
@@ -308,7 +362,25 @@ export default function TechScreen({ user, onLogout }) {
   const totalGrandAmount = totalCartMaterialsAmount + (Number(subscriptionFee) || 0);
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans" dir="rtl">
+    <>
+    {/* 🌟 كود الـ CSS المخصص لضبط حجم الورقة للطابعات الحرارية */}
+    <style type="text/css">
+      {`
+        @media print {
+          @page {
+            size: 80mm auto !important;
+            margin: 0 !important;
+          }
+          body, html {
+            height: auto !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+        }
+      `}
+    </style>
+
+    <div className="min-h-screen bg-slate-50 font-sans print:hidden" dir="rtl">
       
       {msg && (
         <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in border-r-4 min-w-[300px] ${msg.includes('⚠️') || msg.includes('⏳') ? 'bg-amber-50 border-amber-500 text-amber-800' : 'bg-emerald-50 border-emerald-500 text-emerald-800'}`}>
@@ -323,7 +395,7 @@ export default function TechScreen({ user, onLogout }) {
             <img src="/logo.jpeg" alt="Fly Teck" className="h-10 w-10 object-cover rounded-lg" />
           </div>
           <div>
-            <h1 className="font-black text-lg">نظام المواد</h1>
+            <h1 className="font-black text-lg">نظام الفنيين</h1>
             <p className="text-slate-400 text-xs mt-0.5">مرحباً، {user?.name}</p>
           </div>
         </div>
@@ -395,7 +467,7 @@ export default function TechScreen({ user, onLogout }) {
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col animate-fade-in relative max-h-[95vh]">
             <div className="bg-slate-900 p-5 flex justify-between items-center text-white shrink-0">
               <h2 className="text-lg font-bold flex items-center gap-2"><FiShoppingCart className="text-blue-400"/> فاتورة مشتريات (مواد / اشتراكات)</h2>
-              <button onClick={() => { setIsDispenseModalOpen(false); setCart([]); setDispenseCustomerName(''); setDispenseCustomerPhone(''); setSubscriptionFee(''); }} className="p-2 bg-slate-800 hover:bg-red-500 rounded-full transition-colors"><FiX /></button>
+              <button onClick={() => { setIsDispenseModalOpen(false); setCart([]); setDispenseCustomerName(''); setDispenseCustomerPhone(''); setSubscriptionFee(''); setSelectedSeller(''); }} className="p-2 bg-slate-800 hover:bg-red-500 rounded-full transition-colors"><FiX /></button>
             </div>
             
             <div className="p-6 overflow-y-auto custom-scrollbar">
@@ -409,9 +481,21 @@ export default function TechScreen({ user, onLogout }) {
                   <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiPhone/> رقم الهاتف (إجباري)</label>
                   <input type="tel" value={dispenseCustomerPhone} onChange={(e) => setDispenseCustomerPhone(e.target.value)} placeholder="07XX XXX XXXX" dir="ltr" className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 focus:ring-2 focus:ring-blue-100 outline-none text-right" />
                 </div>
+                
+                {/* 🌟 إخفاء القائمة المنسدلة إذا كان الحساب غير shop */}
+                {user?.username === 'shop' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiUser/> اسم الموظف البائع</label>
+                    <select value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 focus:ring-2 focus:ring-blue-100 outline-none text-sm font-bold text-slate-700">
+                      <option value="">اختر البائع...</option>
+                      {sellerOptions.map(seller => (
+                        <option key={seller} value={seller}>{seller}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
-              {/* 🌟 قسم أجور الاشتراك */}
               <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 mb-5">
                 <label className="block text-sm font-black text-amber-900 mb-2 flex items-center gap-2"><FiDollarSign/> أجور الاشتراك / التركيب</label>
                 <input 
@@ -499,9 +583,15 @@ export default function TechScreen({ user, onLogout }) {
                 </span>
               </div>
 
-              <button type="button" onClick={handleCartSubmit} disabled={isDispensing || (cart.length === 0 && !subscriptionFee)} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md mt-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-                {isDispensing ? <FiRefreshCw className="animate-spin" /> : <><FiCheckCircle /> تأكيد وإرسال للإدارة</>}
-              </button>
+              {/* 🌟 تعديل الأزرار: الطباعة فقط، والتأكيد للإدارة فقط */}
+              <div className="flex gap-2 mt-4">
+                <button type="button" onClick={handlePrintOnly} className="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2">
+                  <FiPrinter /> طباعة الوصل فقط
+                </button>
+                <button type="button" onClick={handleCartSubmit} disabled={isDispensing || (cart.length === 0 && !subscriptionFee)} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                  {isDispensing ? <FiRefreshCw className="animate-spin" /> : <><FiCheckCircle /> تأكيد الحفظ بالمخزن</>}
+                </button>
+              </div>
 
             </div>
           </div>
@@ -509,5 +599,70 @@ export default function TechScreen({ user, onLogout }) {
       )}
 
     </div>
+
+    {/* 🌟 واجهة طباعة الوصل المخصصة لطابعات 80mm */}
+    {printData && (
+      <div className="hidden print:block w-[76mm] bg-white text-black font-sans mx-auto text-xs leading-tight p-2" dir="rtl">
+         {/* ترويسة الوصل */}
+         <div className="text-center mb-3">
+           <img src="/logo.jpeg" className="w-14 h-14 mx-auto grayscale" alt="Logo" />
+           <h2 className="font-black text-xl mt-1">Fly Teck</h2>
+           <p className="text-[10px] font-bold border-b border-black pb-1 mt-1">وصل استلام</p>
+         </div>
+
+         {/* معلومات الفاتورة */}
+         <div className="mb-3 space-y-1.5 text-[11px] font-bold">
+           <p>رقم الفاتورة: <span className="font-normal">{printData.invoiceNumber}</span></p>
+           <p>التاريخ: <span className="font-normal" dir="ltr">{printData.displayDate}</span></p>
+           <p>البائع: <span className="font-normal">{printData.seller}</span></p>
+           <p>المشترك: <span className="font-normal">{printData.buyer.split(' - ')[0]}</span></p>
+           <p>الهاتف: <span className="font-normal">{printData.buyer.split(' - ')[1] || '-'}</span></p>
+         </div>
+
+         {/* جدول المواد */}
+         {printData.items && printData.items.length > 0 && (
+             <table className="w-full text-[11px] font-bold border-t border-b border-black mb-3">
+                <thead>
+                  <tr className="border-b border-black">
+                    <th className="text-right py-1">المادة</th>
+                    <th className="text-center py-1">العدد</th>
+                    <th className="text-left py-1">السعر</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {printData.items.filter(i => !i.isSubscription).map((it, i) => (
+                    <tr key={i}>
+                      <td className="py-1 border-b border-gray-300 border-dashed max-w-[40mm] truncate">{it.itemName}</td>
+                      <td className="py-1 text-center border-b border-gray-300 border-dashed">{it.quantity}</td>
+                      <td className="py-1 text-left border-b border-gray-300 border-dashed">{it.isFree ? 'مجاني' : it.sellPrice.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+             </table>
+         )}
+
+         {/* المجاميع */}
+         <div className="text-sm font-black space-y-1">
+           {printData.subscriptionPrice > 0 && (
+             <div className="flex justify-between text-xs font-bold">
+               <span>الاشتراك / التركيب:</span>
+               <span>{printData.subscriptionPrice.toLocaleString()}</span>
+             </div>
+           )}
+           <div className="flex justify-between border-t border-black pt-1 mt-1">
+             <span>الإجمالي المطلوب:</span>
+             <span>{(printData.materialsPrice + printData.subscriptionPrice).toLocaleString()} د.ع</span>
+           </div>
+         </div>
+
+         {/* تذييل الوصل */}
+         <div className="text-center text-[9px] mt-6 pt-2 border-t border-dashed border-black">
+           <p className="font-bold mb-1">شكراً لتعاملكم معنا!</p>
+            <p>الكراده قرب تقاطع الاورزدي</p>
+           <p>07713663013 - 07713836983</p>
+         </div>
+      </div>
+    )}
+    </>
   );
 }

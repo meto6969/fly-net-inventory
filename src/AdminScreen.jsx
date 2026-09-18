@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabase';
-import { FiBox, FiTool, FiLayers, FiPlus, FiTrash2, FiMinus, FiCheckCircle, FiUser, FiDollarSign, FiCalendar, FiX, FiRefreshCw, FiEdit2, FiSave, FiList, FiShoppingCart, FiTrendingUp, FiLogOut, FiAlertCircle, FiSearch, FiPhone } from 'react-icons/fi';
+import { FiBox, FiTool, FiLayers, FiPlus, FiTrash2, FiMinus, FiCheckCircle, FiUser, FiDollarSign, FiCalendar, FiX, FiRefreshCw, FiEdit2, FiSave, FiList, FiShoppingCart, FiTrendingUp, FiLogOut, FiAlertCircle, FiSearch, FiPhone, FiPrinter } from 'react-icons/fi';
 
 let globalMainItems = null;
 let globalTechItems = null;
@@ -78,6 +78,10 @@ export default function AdminScreen({ user, onLogout }) {
   const [sellCustomPrice, setSellCustomPrice] = useState('');
   const [isSelling, setIsSelling] = useState(false);
 
+  // 🌟 إضافة قائمة البائعين لصفحة الإدارة أيضاً
+  const sellerOptions = ['حسن زهير', 'مصطفى', 'زينب', 'فاطمة'];
+  const [selectedSeller, setSelectedSeller] = useState('');
+
   const [allocTech, setAllocTech] = useState('');
   const [allocCart, setAllocCart] = useState([]);
   const [allocItemId, setAllocItemId] = useState('');
@@ -85,6 +89,7 @@ export default function AdminScreen({ user, onLogout }) {
   const [isAllocating, setIsAllocating] = useState(false);
 
   const [newCategory, setNewCategory] = useState('');
+  const [printData, setPrintData] = useState(null);
 
   const currentUser = user?.name || "أمين المخزن";
 
@@ -287,14 +292,20 @@ export default function AdminScreen({ user, onLogout }) {
         let sellerName = 'المكتب (الإدارة)';
         let sellerType = 'office';
         
-        const adminId = entry.created_by || entry.user_id || entry.username;
-        if (adminId) {
-           const userObj = allUsers.find(u => u.username === adminId);
-           if (userObj) {
-             sellerName = userObj.name;
-             sellerType = userObj.role;
-           } else {
-             sellerName = adminId;
+        // استخراج البائع من الملاحظة إذا كان موجوداً
+        const sellerPart = parts.find(p => p.includes('البائع:'));
+        if (sellerPart) {
+           sellerName = sellerPart.replace('البائع:', '').trim();
+        } else {
+           const adminId = entry.created_by || entry.user_id || entry.username;
+           if (adminId) {
+             const userObj = allUsers.find(u => u.username === adminId);
+             if (userObj) {
+               sellerName = userObj.name;
+               sellerType = userObj.role;
+             } else {
+               sellerName = adminId;
+             }
            }
         }
 
@@ -510,6 +521,14 @@ export default function AdminScreen({ user, onLogout }) {
     }
   };
 
+  const handlePrintReceipt = (sale) => {
+    const invoiceNum = Math.floor(100000 + Math.random() * 900000);
+    setPrintData({...sale, invoiceNumber: invoiceNum});
+    setTimeout(() => {
+      window.print();
+    }, 300);
+  };
+
   const handleAddManualMoney = async (e) => {
     e.preventDefault();
     setIsAddingMoney(true);
@@ -601,6 +620,7 @@ export default function AdminScreen({ user, onLogout }) {
     setSellCustomerPhone('');
     setSellCustomPrice(item.customerPrice);
     setSellIsFree(false);
+    setSelectedSeller('');
     setIsSellModalOpen(true);
   };
 
@@ -614,6 +634,29 @@ export default function AdminScreen({ user, onLogout }) {
     }
   };
 
+  // 🌟 دالة للطباعة فقط (في الإدارة)
+  const handlePrintOnlyModal = () => {
+    const finalPrice = sellIsFree ? 0 : Number(sellCustomPrice);
+    const invoiceNum = Math.floor(100000 + Math.random() * 900000);
+    
+    setPrintData({
+      invoiceNumber: invoiceNum,
+      displayDate: formatDate(new Date().toISOString()),
+      seller: selectedSeller || user?.name || 'المكتب',
+      buyer: `${sellCustomerName || 'زبون'} - ${sellCustomerPhone || '-'}`,
+      items: [{
+        itemName: sellItemData.name,
+        quantity: sellQuantity,
+        sellPrice: finalPrice,
+        isFree: sellIsFree,
+        isSubscription: false
+      }],
+      subscriptionPrice: 0,
+      materialsPrice: finalPrice * sellQuantity
+    });
+    setTimeout(() => window.print(), 300);
+  };
+
   const handleSellItemSubmit = async (e) => {
     e.preventDefault();
     if (sellQuantity < 1 || sellQuantity > sellItemData.quantity) {
@@ -624,13 +667,17 @@ export default function AdminScreen({ user, onLogout }) {
       alert("يرجى إدخال اسم المشترك ورقم هاتفه.");
       return;
     }
+    if (!selectedSeller) {
+      alert("يرجى اختيار اسم البائع من القائمة.");
+      return;
+    }
 
     setIsSelling(true);
 
     const finalPrice = sellIsFree ? 0 : Number(sellCustomPrice);
     const totalPrice = finalPrice * sellQuantity;
     const freeLabel = sellIsFree ? ' (مجاني)' : '';
-    const noteStr = `بيع مباشر (مواد): ${sellItemData.name} | العدد: ${sellQuantity} | المشتري: ${sellCustomerName} - ${sellCustomerPhone}${freeLabel} | المستلم: ${user?.name} (${getLocalTodayDate()})`;
+    const noteStr = `بيع مباشر (مواد): ${sellItemData.name} | العدد: ${sellQuantity} | المشتري: ${sellCustomerName} - ${sellCustomerPhone}${freeLabel} | البائع: ${selectedSeller} | المستلم: ${user?.name} (${getLocalTodayDate()})`;
     const todayDate = getLocalTodayDate();
     const adminUsername = user?.username || 'المكتب (الإدارة)';
 
@@ -644,6 +691,7 @@ export default function AdminScreen({ user, onLogout }) {
     
     setIsSellModalOpen(false);
     setSellItemData(null);
+    setSelectedSeller('');
     showMsg('✅ تمت عملية البيع بنجاح وخصم المادة!');
 
     try {
@@ -884,7 +932,25 @@ export default function AdminScreen({ user, onLogout }) {
   }, 0);
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-10 font-sans" dir="rtl">
+    <>
+    {/* 🌟 كود الـ CSS المخصص لضبط حجم الورقة للطابعات الحرارية */}
+    <style type="text/css">
+      {`
+        @media print {
+          @page {
+            size: 80mm auto !important;
+            margin: 0 !important;
+          }
+          body, html {
+            height: auto !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+        }
+      `}
+    </style>
+
+    <div className="min-h-screen bg-slate-50 p-6 md:p-10 font-sans print:hidden" dir="rtl">
       
       {msg && (
         <div className={`fixed top-10 left-1/2 -translate-x-1/2 z-[9999] px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in min-w-[320px] max-w-[90%] border-r-4 ${msg.includes('⚠️') ? 'bg-amber-50 border-amber-500' : 'bg-emerald-50 border-emerald-500'}`}>
@@ -1425,7 +1491,6 @@ export default function AdminScreen({ user, onLogout }) {
 
                                <td className="p-4 text-center font-black text-slate-600">
                                  <div className="flex flex-col gap-1.5">
-                                   {/* 🌟 إخفاء كمية أجور الاشتراك (التي هي "-") */}
                                    {sale.items.filter(it => !it.isSubscription).map((it, idx) => (
                                      <div key={idx} className="text-sm">{it.quantity}</div>
                                    ))}
@@ -1454,13 +1519,21 @@ export default function AdminScreen({ user, onLogout }) {
                                </td>
 
                                <td className="p-4 text-center">
-                                  <div className="flex flex-col items-center gap-1">
+                                  <div className="flex flex-col items-center gap-1.5">
                                     <button 
                                       onClick={() => togglePaymentStatus(sale)}
-                                      className={`px-4 py-1.5 rounded-xl text-xs font-black transition-all shadow-sm border ${sale.isPaid ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200' : 'bg-white text-slate-600 border-slate-300 hover:bg-emerald-600 hover:text-white hover:border-emerald-600'}`}
+                                      className={`w-full px-4 py-1.5 rounded-xl text-xs font-black transition-all shadow-sm border ${sale.isPaid ? 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200' : 'bg-white text-slate-600 border-slate-300 hover:bg-emerald-600 hover:text-white hover:border-emerald-600'}`}
                                     >
                                       {sale.isPaid ? '✔️ مستلم' : '⏳ غير مستلم'}
                                     </button>
+                                    
+                                    <button 
+                                      onClick={() => handlePrintReceipt(sale)} 
+                                      className="w-full flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200 transition-all"
+                                    >
+                                      <FiPrinter size={14} /> طباعة وصل
+                                    </button>
+
                                     {sale.isPaid && sale.receiverInfo && (
                                       <span className="text-[10px] text-slate-400 font-bold leading-tight max-w-[120px]" title={sale.receiverInfo}>استلم: {sale.receiverInfo.split('(')[0]}</span>
                                     )}
@@ -1521,7 +1594,7 @@ export default function AdminScreen({ user, onLogout }) {
                 </div>
               </div>
 
-              <form onSubmit={handleSellItemSubmit} className="space-y-4">
+              <div className="space-y-4">
                 <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiUser/> اسم المشترك (إجباري)</label>
@@ -1530,6 +1603,16 @@ export default function AdminScreen({ user, onLogout }) {
                   <div>
                     <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiPhone/> رقم الهاتف (إجباري)</label>
                     <input type="tel" required value={sellCustomerPhone} onChange={(e) => setSellCustomerPhone(e.target.value)} placeholder="07XX XXX XXXX" dir="ltr" className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 focus:ring-2 focus:ring-emerald-100 outline-none text-right" />
+                  </div>
+                  {/* 🌟 إضافة قائمة البائعين في البيع المباشر للإدارة */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiUser/> اسم الموظف البائع</label>
+                    <select value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 focus:ring-2 focus:ring-emerald-100 outline-none text-sm font-bold text-slate-700">
+                      <option value="">اختر البائع...</option>
+                      {sellerOptions.map(seller => (
+                        <option key={seller} value={seller}>{seller}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 
@@ -1570,10 +1653,16 @@ export default function AdminScreen({ user, onLogout }) {
                   </span>
                 </div>
 
-                <button type="submit" disabled={isSelling || sellItemData.quantity < 1} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md mt-4 flex items-center justify-center gap-2">
-                  {isSelling ? <FiRefreshCw className="animate-spin" /> : <><FiCheckCircle /> تأكيد البيع واستلام المبلغ</>}
-                </button>
-              </form>
+                {/* 🌟 أزرار منفصلة للطباعة فقط أو الحفظ */}
+                <div className="flex gap-2 mt-4">
+                  <button type="button" onClick={handlePrintOnlyModal} className="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2">
+                    <FiPrinter /> طباعة الوصل فقط
+                  </button>
+                  <button type="button" onClick={handleSellItemSubmit} disabled={isSelling || sellItemData.quantity < 1} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                    {isSelling ? <FiRefreshCw className="animate-spin" /> : <><FiCheckCircle /> تأكيد البيع بالمخزن</>}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1716,5 +1805,70 @@ export default function AdminScreen({ user, onLogout }) {
       )}
 
     </div>
+
+    {/* 🌟 واجهة طباعة الوصل المخصصة لطابعات 80mm */}
+    {printData && (
+      <div className="hidden print:block w-[76mm] bg-white text-black font-sans mx-auto text-xs leading-tight p-2" dir="rtl">
+         {/* ترويسة الوصل */}
+         <div className="text-center mb-3">
+           <img src="/logo.jpeg" className="w-14 h-14 mx-auto grayscale" alt="Logo" />
+           <h2 className="font-black text-xl mt-1">Fly Teck</h2>
+           <p className="text-[10px] font-bold border-b border-black pb-1 mt-1">وصل استلام</p>
+         </div>
+
+         {/* معلومات الفاتورة */}
+         <div className="mb-3 space-y-1.5 text-[11px] font-bold">
+           <p>رقم الفاتورة: <span className="font-normal">{printData.invoiceNumber}</span></p>
+           <p>التاريخ: <span className="font-normal" dir="ltr">{printData.displayDate}</span></p>
+           <p>البائع: <span className="font-normal">{printData.seller}</span></p>
+           <p>المشترك: <span className="font-normal">{printData.buyer.split(' - ')[0]}</span></p>
+           <p>الهاتف: <span className="font-normal">{printData.buyer.split(' - ')[1] || '-'}</span></p>
+         </div>
+
+         {/* جدول المواد */}
+         {printData.items && printData.items.length > 0 && (
+             <table className="w-full text-[11px] font-bold border-t border-b border-black mb-3">
+                <thead>
+                  <tr className="border-b border-black">
+                    <th className="text-right py-1">المادة</th>
+                    <th className="text-center py-1">العدد</th>
+                    <th className="text-left py-1">السعر</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {printData.items.filter(i => !i.isSubscription).map((it, i) => (
+                    <tr key={i}>
+                      <td className="py-1 border-b border-gray-300 border-dashed max-w-[40mm] truncate">{it.itemName}</td>
+                      <td className="py-1 text-center border-b border-gray-300 border-dashed">{it.quantity}</td>
+                      <td className="py-1 text-left border-b border-gray-300 border-dashed">{it.isFree ? 'مجاني' : it.sellPrice.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+             </table>
+         )}
+
+         {/* المجاميع */}
+         <div className="text-sm font-black space-y-1">
+           {printData.subscriptionPrice > 0 && (
+             <div className="flex justify-between text-xs font-bold">
+               <span>الاشتراك / التركيب:</span>
+               <span>{printData.subscriptionPrice.toLocaleString()}</span>
+             </div>
+           )}
+           <div className="flex justify-between border-t border-black pt-1 mt-1">
+             <span>الإجمالي المطلوب:</span>
+             <span>{(printData.materialsPrice + printData.subscriptionPrice).toLocaleString()} د.ع</span>
+           </div>
+         </div>
+
+         {/* تذييل الوصل */}
+         <div className="text-center text-[9px] mt-6 pt-2 border-t border-dashed border-black">
+           <p className="font-bold mb-1">شكراً لتعاملكم معنا!</p>
+           <p>الكراده قرب تقاطع الاورزدي</p>
+           <p>07713663013 - 07713836983</p>
+         </div>
+      </div>
+    )}
+    </>
   );
 }
