@@ -44,7 +44,7 @@ export default function TechScreen({ user, onLogout }) {
   const [dispenseCustomerPhone, setDispenseCustomerPhone] = useState('');
   const [subscriptionFee, setSubscriptionFee] = useState(''); 
   
-  // 🌟 قائمة البائعين الجديدة
+  // قائمة البائعين
   const sellerOptions = ['حسن زهير', 'مصطفى', 'زينب', 'فاطمة'];
   const [selectedSeller, setSelectedSeller] = useState('');
 
@@ -92,7 +92,8 @@ export default function TechScreen({ user, onLogout }) {
     try {
       const [techRes, mainRes] = await Promise.all([
         supabase.from('inventory_techs').select('*').eq('techUsername', user.username),
-        supabase.from('inventory_main').select('id, customerPrice')
+        // 🌟 التعديل هنا: جلب سعر الفني وسعر المكتب
+        supabase.from('inventory_main').select('id, customerPrice, techPrice')
       ]);
       if (techRes.error) throw techRes.error;
       
@@ -101,7 +102,12 @@ export default function TechScreen({ user, onLogout }) {
       
       const combinedData = techData.map(tItem => {
         const mItem = mainData.find(m => String(m.id) === String(tItem.itemId));
-        return { ...tItem, customerPrice: mItem ? mItem.customerPrice : 0 };
+        // 🌟 التعديل السحري: تحديد السعر المناسب بناءً على اسم المستخدم
+        const appropriatePrice = user?.username === 'shop' 
+          ? (mItem ? mItem.customerPrice : 0) // للشوب: سعر المكتب
+          : (mItem ? mItem.techPrice : 0);    // للفنيين: سعر الفني
+          
+        return { ...tItem, displayPrice: appropriatePrice };
       });
 
       setTechInventory(combinedData);
@@ -184,7 +190,8 @@ export default function TechScreen({ user, onLogout }) {
     setSelectedItemId(id);
     const item = techInventory.find(i => String(i.itemId) === String(id));
     if (item) {
-      setCustomPrice(item.customerPrice);
+      // 🌟 استخدام السعر الذي تم تحديده مسبقاً بناءً على نوع المستخدم
+      setCustomPrice(item.displayPrice);
     } else {
       setCustomPrice('');
     }
@@ -230,7 +237,6 @@ export default function TechScreen({ user, onLogout }) {
     setCart(cart.filter(c => String(c.itemId) !== String(itemId)));
   };
 
-  // 🌟 دالة للطباعة فقط (لا تحفظ في المخزن)
   const handlePrintOnly = () => {
     const subFeeNum = Number(subscriptionFee) || 0;
     const totalMaterialsPrice = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
@@ -242,7 +248,6 @@ export default function TechScreen({ user, onLogout }) {
 
     const invoiceNum = Math.floor(100000 + Math.random() * 900000);
 
-    // التحقق من البائع: إما من القائمة (إذا كان shop) أو اسم المستخدم الحالي
     const finalSeller = user?.username === 'shop' ? (selectedSeller || 'غير محدد') : (user?.name || 'غير محدد');
 
     setPrintData({
@@ -263,7 +268,6 @@ export default function TechScreen({ user, onLogout }) {
     setTimeout(() => window.print(), 300);
   };
 
-  // 🌟 دالة للحفظ والتأكيد فقط
   const handleCartSubmit = async (e) => {
     e.preventDefault();
     if (!dispenseCustomerName || !dispenseCustomerPhone) {
@@ -271,7 +275,6 @@ export default function TechScreen({ user, onLogout }) {
       return;
     }
     
-    // التحقق من اختيار البائع إذا كان الحساب shop
     if (user?.username === 'shop' && !selectedSeller) {
       alert("يرجى اختيار اسم البائع من القائمة.");
       return;
@@ -363,7 +366,6 @@ export default function TechScreen({ user, onLogout }) {
 
   return (
     <>
-    {/* 🌟 كود الـ CSS المخصص لضبط حجم الورقة للطابعات الحرارية */}
     <style type="text/css">
       {`
         @media print {
@@ -482,7 +484,6 @@ export default function TechScreen({ user, onLogout }) {
                   <input type="tel" value={dispenseCustomerPhone} onChange={(e) => setDispenseCustomerPhone(e.target.value)} placeholder="07XX XXX XXXX" dir="ltr" className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 focus:ring-2 focus:ring-blue-100 outline-none text-right" />
                 </div>
                 
-                {/* 🌟 إخفاء القائمة المنسدلة إذا كان الحساب غير shop */}
                 {user?.username === 'shop' && (
                   <div>
                     <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiUser/> اسم الموظف البائع</label>
@@ -583,7 +584,6 @@ export default function TechScreen({ user, onLogout }) {
                 </span>
               </div>
 
-              {/* 🌟 تعديل الأزرار: الطباعة فقط، والتأكيد للإدارة فقط */}
               <div className="flex gap-2 mt-4">
                 <button type="button" onClick={handlePrintOnly} className="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2">
                   <FiPrinter /> طباعة الوصل فقط
@@ -600,18 +600,15 @@ export default function TechScreen({ user, onLogout }) {
 
     </div>
 
-    {/* 🌟 واجهة طباعة الوصل المخصصة لطابعات 80mm */}
     {printData && (
-      <div className="hidden print:block w-[76mm] bg-white text-black font-sans mx-auto text-xs leading-tight p-2" dir="rtl">
-         {/* ترويسة الوصل */}
+      <div className="hidden print:block w-[76mm] bg-white text-black font-sans mx-auto text-xs leading-tight px-4 py-2" dir="rtl">
          <div className="text-center mb-3">
            <img src="/logo.jpeg" className="w-14 h-14 mx-auto grayscale" alt="Logo" />
            <h2 className="font-black text-xl mt-1">Fly Teck</h2>
            <p className="text-[10px] font-bold border-b border-black pb-1 mt-1">وصل استلام</p>
          </div>
 
-         {/* معلومات الفاتورة */}
-         <div className="mb-3 space-y-1.5 text-[11px] font-bold">
+         <div className="mb-3 space-y-1.5 text-[11px] font-bold px-1">
            <p>رقم الفاتورة: <span className="font-normal">{printData.invoiceNumber}</span></p>
            <p>التاريخ: <span className="font-normal" dir="ltr">{printData.displayDate}</span></p>
            <p>البائع: <span className="font-normal">{printData.seller}</span></p>
@@ -619,30 +616,28 @@ export default function TechScreen({ user, onLogout }) {
            <p>الهاتف: <span className="font-normal">{printData.buyer.split(' - ')[1] || '-'}</span></p>
          </div>
 
-         {/* جدول المواد */}
          {printData.items && printData.items.length > 0 && (
              <table className="w-full text-[11px] font-bold border-t border-b border-black mb-3">
                 <thead>
                   <tr className="border-b border-black">
-                    <th className="text-right py-1">المادة</th>
-                    <th className="text-center py-1">العدد</th>
-                    <th className="text-left py-1">السعر</th>
+                    <th className="text-right py-1.5 px-1 w-[45%]">المادة</th>
+                    <th className="text-center py-1.5 px-1 w-[15%]">العدد</th>
+                    <th className="text-left py-1.5 px-1 w-[40%]">السعر</th>
                   </tr>
                 </thead>
                 <tbody>
                   {printData.items.filter(i => !i.isSubscription).map((it, i) => (
                     <tr key={i}>
-                      <td className="py-1 border-b border-gray-300 border-dashed max-w-[40mm] truncate">{it.itemName}</td>
-                      <td className="py-1 text-center border-b border-gray-300 border-dashed">{it.quantity}</td>
-                      <td className="py-1 text-left border-b border-gray-300 border-dashed">{it.isFree ? 'مجاني' : it.sellPrice.toLocaleString()}</td>
+                      <td className="py-1.5 px-1 border-b border-gray-300 border-dashed truncate">{it.itemName}</td>
+                      <td className="py-1.5 px-1 text-center border-b border-gray-300 border-dashed">{it.quantity}</td>
+                      <td className="py-1.5 px-1 text-left border-b border-gray-300 border-dashed">{it.isFree ? 'مجاني' : it.sellPrice.toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
              </table>
          )}
 
-         {/* المجاميع */}
-         <div className="text-sm font-black space-y-1">
+         <div className="text-sm font-black space-y-1 px-1">
            {printData.subscriptionPrice > 0 && (
              <div className="flex justify-between text-xs font-bold">
                <span>الاشتراك / التركيب:</span>
@@ -655,11 +650,9 @@ export default function TechScreen({ user, onLogout }) {
            </div>
          </div>
 
-         {/* تذييل الوصل */}
          <div className="text-center text-[9px] mt-6 pt-2 border-t border-dashed border-black">
            <p className="font-bold mb-1">شكراً لتعاملكم معنا!</p>
-            <p>الكراده قرب تقاطع الاورزدي</p>
-           <p>07713663013 - 07713836983</p>
+           <p>نظام Fly Teck لإدارة الشبكات</p>
          </div>
       </div>
     )}

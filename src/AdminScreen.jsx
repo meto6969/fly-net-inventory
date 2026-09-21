@@ -64,7 +64,7 @@ export default function AdminScreen({ user, onLogout }) {
   const [isEditTotalModalOpen, setIsEditTotalModalOpen] = useState(false);
   const [newTotalAmount, setNewTotalAmount] = useState('');
 
-  const [newItem, setNewItem] = useState({ name: '', category: '', quantity: 0, alertQty: 0, wholesalePrice: 0, customerPrice: 0 });
+  const [newItem, setNewItem] = useState({ name: '', category: '', quantity: 0, alertQty: 0, wholesalePrice: 0, customerPrice: 0, techPrice: 0 });
   
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editItemData, setEditItemData] = useState(null);
@@ -78,7 +78,6 @@ export default function AdminScreen({ user, onLogout }) {
   const [sellCustomPrice, setSellCustomPrice] = useState('');
   const [isSelling, setIsSelling] = useState(false);
 
-  // 🌟 إضافة قائمة البائعين لصفحة الإدارة أيضاً
   const sellerOptions = ['حسن زهير', 'مصطفى', 'زينب', 'فاطمة'];
   const [selectedSeller, setSelectedSeller] = useState('');
 
@@ -292,7 +291,6 @@ export default function AdminScreen({ user, onLogout }) {
         let sellerName = 'المكتب (الإدارة)';
         let sellerType = 'office';
         
-        // استخراج البائع من الملاحظة إذا كان موجوداً
         const sellerPart = parts.find(p => p.includes('البائع:'));
         if (sellerPart) {
            sellerName = sellerPart.replace('البائع:', '').trim();
@@ -634,7 +632,6 @@ export default function AdminScreen({ user, onLogout }) {
     }
   };
 
-  // 🌟 دالة للطباعة فقط (في الإدارة)
   const handlePrintOnlyModal = () => {
     const finalPrice = sellIsFree ? 0 : Number(sellCustomPrice);
     const invoiceNum = Math.floor(100000 + Math.random() * 900000);
@@ -723,7 +720,7 @@ export default function AdminScreen({ user, onLogout }) {
     e.preventDefault();
     const { error } = await supabase.from('inventory_main').insert([newItem]);
     if (!error) {
-      setNewItem({ name: '', category: '', quantity: 0, alertQty: 0, wholesalePrice: 0, customerPrice: 0 });
+      setNewItem({ name: '', category: '', quantity: 0, alertQty: 0, wholesalePrice: 0, customerPrice: 0, techPrice: 0 });
       showMsg('تمت إضافة المادة للمخزن بنجاح');
     }
   };
@@ -748,7 +745,8 @@ export default function AdminScreen({ user, onLogout }) {
         quantity: editItemData.quantity,
         alertQty: editItemData.alertQty,
         wholesalePrice: editItemData.wholesalePrice,
-        customerPrice: editItemData.customerPrice
+        customerPrice: editItemData.customerPrice,
+        techPrice: editItemData.techPrice
       }).eq('id', editItemData.id);
 
       if (error) throw error;
@@ -1013,27 +1011,31 @@ export default function AdminScreen({ user, onLogout }) {
                           {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                         </select>
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 mb-1">الكمية</label>
-                          <input type="number" min="0" required value={newItem.quantity} onChange={(e)=>setNewItem({...newItem, quantity: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none" />
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="col-span-1">
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">الكمية</label>
+                          <input type="number" min="0" required value={newItem.quantity} onChange={(e)=>setNewItem({...newItem, quantity: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2 outline-none text-sm" />
                         </div>
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 mb-1">حد التنبيه (النواقص)</label>
-                          <input type="number" min="0" value={newItem.alertQty} onChange={(e)=>setNewItem({...newItem, alertQty: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none" />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 mb-1">سعر الشراء (الجملة)</label>
-                          <input type="number" min="0" value={newItem.wholesalePrice} onChange={(e)=>setNewItem({...newItem, wholesalePrice: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none focus:ring-2 focus:ring-blue-100" placeholder="مثال: 35000" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 mb-1">سعر البيع (للمشترك)</label>
-                          <input type="number" min="0" required value={newItem.customerPrice} onChange={(e)=>setNewItem({...newItem, customerPrice: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none focus:ring-2 focus:ring-blue-100" placeholder="مثال: 45000" />
+                        <div className="col-span-2">
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">حد التنبيه للنواقص</label>
+                          <input type="number" min="0" value={newItem.alertQty} onChange={(e)=>setNewItem({...newItem, alertQty: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2 outline-none text-sm" />
                         </div>
                       </div>
-                      <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl mt-2 transition-colors">إضافة للمخزن</button>
+                      <div className="grid grid-cols-3 gap-2 border-t pt-3 mt-1">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">سعر الشراء</label>
+                          <input type="number" min="0" value={newItem.wholesalePrice} onChange={(e)=>setNewItem({...newItem, wholesalePrice: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2 outline-none focus:ring-2 focus:ring-blue-100 text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-emerald-600 mb-1">سعر المكتب</label>
+                          <input type="number" min="0" required value={newItem.customerPrice} onChange={(e)=>setNewItem({...newItem, customerPrice: e.target.value})} className="w-full bg-emerald-50 border border-emerald-200 rounded-xl py-2 px-2 outline-none focus:ring-2 focus:ring-emerald-200 text-sm text-emerald-700 font-bold" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-orange-600 mb-1">سعر الفني</label>
+                          <input type="number" min="0" required value={newItem.techPrice} onChange={(e)=>setNewItem({...newItem, techPrice: e.target.value})} className="w-full bg-orange-50 border border-orange-200 rounded-xl py-2 px-2 outline-none focus:ring-2 focus:ring-orange-200 text-sm text-orange-700 font-bold" />
+                        </div>
+                      </div>
+                      <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl mt-2 transition-colors shadow-sm">إضافة للمخزن</button>
                     </form>
                   </div>
                 </div>
@@ -1045,13 +1047,13 @@ export default function AdminScreen({ user, onLogout }) {
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-right">
-                        <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 text-sm">
+                        <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs">
                           <tr>
                             <th className="p-4 font-bold">المادة</th>
-                            <th className="p-4 font-bold">القسم</th>
                             <th className="p-4 font-bold">سعر الشراء</th>
-                            <th className="p-4 font-bold">سعر البيع</th>
-                            <th className="p-4 font-bold text-center">إجمالي الربح (الصافي)</th>
+                            <th className="p-4 font-bold text-emerald-700">سعر المكتب</th>
+                            <th className="p-4 font-bold text-orange-700">سعر الفني</th>
+                            <th className="p-4 font-bold text-center">الربح المتوقع للمكتب</th>
                             <th className="p-4 font-bold text-center">الكمية المتوفرة</th>
                             <th className="p-4 font-bold text-center">إجراء</th>
                           </tr>
@@ -1062,25 +1064,28 @@ export default function AdminScreen({ user, onLogout }) {
                             const totalProfit = profitPerItem * (Number(item.quantity) || 0);
                             
                             return (
-                              <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                                <td className="p-4 font-bold text-slate-800">{item.name}</td>
-                                <td className="p-4 text-slate-500 text-sm">{item.category}</td>
+                              <tr key={item.id} className="hover:bg-slate-50 transition-colors text-sm">
+                                <td className="p-4 font-bold text-slate-800">
+                                  {item.name}
+                                  <div className="text-[10px] text-slate-400 mt-0.5">{item.category}</div>
+                                </td>
                                 <td className="p-4 text-slate-600 font-medium">{item.wholesalePrice || 0} د.ع</td>
-                                <td className="p-4 text-emerald-600 font-bold">{item.customerPrice || 0} د.ع</td>
-                                <td className={`p-4 text-center font-black bg-slate-50/20 ${totalProfit > 0 ? 'text-blue-600' : totalProfit < 0 ? 'text-red-500' : 'text-slate-600'}`}>
+                                <td className="p-4 text-emerald-600 font-bold bg-emerald-50/30">{item.customerPrice || 0} د.ع</td>
+                                <td className="p-4 text-orange-600 font-bold bg-orange-50/30">{item.techPrice || 0} د.ع</td>
+                                <td className={`p-4 text-center font-black ${totalProfit > 0 ? 'text-blue-600' : totalProfit < 0 ? 'text-red-500' : 'text-slate-600'}`}>
                                   {totalProfit > 0 ? '+' : ''}{totalProfit.toLocaleString()} د.ع
                                 </td>
                                 <td className="p-4 text-center">
-                                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${Number(item.quantity) <= Number(item.alertQty) ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${Number(item.quantity) <= Number(item.alertQty) ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>
                                     {item.quantity}
                                   </span>
                                 </td>
                                 <td className="p-4 text-center flex items-center justify-center gap-1">
-                                  <button onClick={() => openSellModal(item)} disabled={item.quantity < 1} className="p-2 text-emerald-500 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors" title="بيع مباشر للمشترك"><FiShoppingCart size={18} /></button>
+                                  <button onClick={() => openSellModal(item)} disabled={item.quantity < 1} className="p-2 text-emerald-500 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors" title="بيع مباشر للمشترك"><FiShoppingCart size={16} /></button>
                                   <div className="w-px h-4 bg-slate-200"></div>
-                                  <button onClick={() => openEditModal(item)} className="p-2 text-blue-500 hover:bg-blue-50 hover:text-blue-700 rounded-lg transition-colors" title="تعديل المادة"><FiEdit2 size={18} /></button>
+                                  <button onClick={() => openEditModal(item)} className="p-2 text-blue-500 hover:bg-blue-50 hover:text-blue-700 rounded-lg transition-colors" title="تعديل المادة"><FiEdit2 size={16} /></button>
                                   <div className="w-px h-4 bg-slate-200"></div>
-                                  <button onClick={() => handleDeleteItem(item.id)} className="p-2 text-red-500 hover:bg-red-50 hover:text-red-700 rounded-lg transition-colors" title="حذف المادة"><FiTrash2 size={18} /></button>
+                                  <button onClick={() => handleDeleteItem(item.id)} className="p-2 text-red-500 hover:bg-red-50 hover:text-red-700 rounded-lg transition-colors" title="حذف المادة"><FiTrash2 size={16} /></button>
                                 </td>
                               </tr>
                             );
@@ -1093,18 +1098,18 @@ export default function AdminScreen({ user, onLogout }) {
                                 إجمالي المخزن الرئيسي:
                               </td>
                               <td colSpan="2" className="p-4 text-center font-bold border-l border-slate-700">
-                                <div className="text-xs text-slate-400 mb-1">رأس المال (إجمالي سعر الشراء)</div>
-                                <span className="text-orange-400 text-lg">{totalInventoryCapital.toLocaleString()} د.ع</span>
+                                <div className="text-xs text-slate-400 mb-1">رأس المال (إجمالي الشراء)</div>
+                                <span className="text-orange-400 text-base">{totalInventoryCapital.toLocaleString()} د.ع</span>
                               </td>
                               <td className="p-4 text-center font-black border-l border-slate-700">
-                                <div className="text-xs text-slate-400 mb-1 font-bold">إجمالي الربح المتوقع</div>
-                                <span className={`text-lg ${totalExpectedProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                <div className="text-xs text-slate-400 mb-1 font-bold">إجمالي الربح المتوقع للمكتب</div>
+                                <span className={`text-base ${totalExpectedProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                                   {totalExpectedProfit > 0 ? '+' : ''}{totalExpectedProfit.toLocaleString()} د.ع
                                 </span>
                               </td>
                               <td className="p-4 text-center font-bold border-l border-slate-700">
-                                <div className="text-xs text-slate-400 mb-1">إجمالي القطع المتوفرة</div>
-                                <span className="text-blue-400 text-lg">{mainItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)}</span>
+                                <div className="text-xs text-slate-400 mb-1">إجمالي القطع</div>
+                                <span className="text-blue-400 text-base">{mainItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)}</span>
                               </td>
                               <td></td>
                             </tr>
@@ -1475,7 +1480,6 @@ export default function AdminScreen({ user, onLogout }) {
                                
                                <td className="p-4">
                                  <div className="flex flex-col gap-1.5 mb-2">
-                                   {/* 🌟 إخفاء عبارة "أجور اشتراك / تركيب" من عرض المواد */}
                                    {sale.items.filter(it => !it.isSubscription).map((it, idx) => (
                                      <div key={idx} className="font-bold text-sm text-slate-800 flex items-center gap-1.5">
                                        <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span> 
@@ -1594,7 +1598,7 @@ export default function AdminScreen({ user, onLogout }) {
                 </div>
               </div>
 
-              <div className="space-y-4">
+              <form onSubmit={handleSellItemSubmit} className="space-y-4">
                 <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiUser/> اسم المشترك (إجباري)</label>
@@ -1604,7 +1608,6 @@ export default function AdminScreen({ user, onLogout }) {
                     <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiPhone/> رقم الهاتف (إجباري)</label>
                     <input type="tel" required value={sellCustomerPhone} onChange={(e) => setSellCustomerPhone(e.target.value)} placeholder="07XX XXX XXXX" dir="ltr" className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 focus:ring-2 focus:ring-emerald-100 outline-none text-right" />
                   </div>
-                  {/* 🌟 إضافة قائمة البائعين في البيع المباشر للإدارة */}
                   <div>
                     <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiUser/> اسم الموظف البائع</label>
                     <select value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 focus:ring-2 focus:ring-emerald-100 outline-none text-sm font-bold text-slate-700">
@@ -1653,16 +1656,15 @@ export default function AdminScreen({ user, onLogout }) {
                   </span>
                 </div>
 
-                {/* 🌟 أزرار منفصلة للطباعة فقط أو الحفظ */}
                 <div className="flex gap-2 mt-4">
                   <button type="button" onClick={handlePrintOnlyModal} className="flex-1 bg-slate-800 hover:bg-black text-white font-bold py-3.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2">
                     <FiPrinter /> طباعة الوصل فقط
                   </button>
-                  <button type="button" onClick={handleSellItemSubmit} disabled={isSelling || sellItemData.quantity < 1} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <button type="submit" disabled={isSelling || sellItemData.quantity < 1} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                     {isSelling ? <FiRefreshCw className="animate-spin" /> : <><FiCheckCircle /> تأكيد البيع بالمخزن</>}
                   </button>
                 </div>
-              </div>
+              </form>
             </div>
           </div>
         </div>
@@ -1698,14 +1700,18 @@ export default function AdminScreen({ user, onLogout }) {
                     <input type="number" min="0" value={editItemData.alertQty} onChange={(e)=>setEditItemData({...editItemData, alertQty: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none" />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-2 border-t pt-3 mt-1">
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">سعر الشراء</label>
-                    <input type="number" min="0" value={editItemData.wholesalePrice} onChange={(e)=>setEditItemData({...editItemData, wholesalePrice: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none focus:ring-2 focus:ring-blue-100" />
+                    <label className="block text-[10px] font-bold text-slate-500 mb-1">سعر الشراء</label>
+                    <input type="number" min="0" value={editItemData.wholesalePrice} onChange={(e)=>setEditItemData({...editItemData, wholesalePrice: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-2 outline-none focus:ring-2 focus:ring-blue-100 text-sm" />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">سعر البيع</label>
-                    <input type="number" min="0" required value={editItemData.customerPrice} onChange={(e)=>setEditItemData({...editItemData, customerPrice: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 outline-none focus:ring-2 focus:ring-blue-100" />
+                    <label className="block text-[10px] font-bold text-emerald-600 mb-1">سعر المكتب</label>
+                    <input type="number" min="0" required value={editItemData.customerPrice} onChange={(e)=>setEditItemData({...editItemData, customerPrice: e.target.value})} className="w-full bg-emerald-50 border border-emerald-200 rounded-xl py-2 px-2 outline-none focus:ring-2 focus:ring-emerald-200 text-sm text-emerald-700 font-bold" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-orange-600 mb-1">سعر الفني</label>
+                    <input type="number" min="0" required value={editItemData.techPrice} onChange={(e)=>setEditItemData({...editItemData, techPrice: e.target.value})} className="w-full bg-orange-50 border border-orange-200 rounded-xl py-2 px-2 outline-none focus:ring-2 focus:ring-orange-200 text-sm text-orange-700 font-bold" />
                   </div>
                 </div>
                 <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md mt-4 flex items-center justify-center gap-2">
@@ -1806,18 +1812,16 @@ export default function AdminScreen({ user, onLogout }) {
 
     </div>
 
-    {/* 🌟 واجهة طباعة الوصل المخصصة لطابعات 80mm */}
+    {/* 🌟 واجهة طباعة الوصل المخصصة لطابعات 80mm مع Padding يحمي النصوص */}
     {printData && (
-      <div className="hidden print:block w-[76mm] bg-white text-black font-sans mx-auto text-xs leading-tight p-2" dir="rtl">
-         {/* ترويسة الوصل */}
+      <div className="hidden print:block w-[76mm] bg-white text-black font-sans mx-auto text-xs leading-tight px-4 py-2" dir="rtl">
          <div className="text-center mb-3">
            <img src="/logo.jpeg" className="w-14 h-14 mx-auto grayscale" alt="Logo" />
            <h2 className="font-black text-xl mt-1">Fly Teck</h2>
            <p className="text-[10px] font-bold border-b border-black pb-1 mt-1">وصل استلام</p>
          </div>
 
-         {/* معلومات الفاتورة */}
-         <div className="mb-3 space-y-1.5 text-[11px] font-bold">
+         <div className="mb-3 space-y-1.5 text-[11px] font-bold px-1">
            <p>رقم الفاتورة: <span className="font-normal">{printData.invoiceNumber}</span></p>
            <p>التاريخ: <span className="font-normal" dir="ltr">{printData.displayDate}</span></p>
            <p>البائع: <span className="font-normal">{printData.seller}</span></p>
@@ -1825,30 +1829,28 @@ export default function AdminScreen({ user, onLogout }) {
            <p>الهاتف: <span className="font-normal">{printData.buyer.split(' - ')[1] || '-'}</span></p>
          </div>
 
-         {/* جدول المواد */}
          {printData.items && printData.items.length > 0 && (
              <table className="w-full text-[11px] font-bold border-t border-b border-black mb-3">
                 <thead>
                   <tr className="border-b border-black">
-                    <th className="text-right py-1">المادة</th>
-                    <th className="text-center py-1">العدد</th>
-                    <th className="text-left py-1">السعر</th>
+                    <th className="text-right py-1.5 px-1 w-[45%]">المادة</th>
+                    <th className="text-center py-1.5 px-1 w-[15%]">العدد</th>
+                    <th className="text-left py-1.5 px-1 w-[40%]">السعر</th>
                   </tr>
                 </thead>
                 <tbody>
                   {printData.items.filter(i => !i.isSubscription).map((it, i) => (
                     <tr key={i}>
-                      <td className="py-1 border-b border-gray-300 border-dashed max-w-[40mm] truncate">{it.itemName}</td>
-                      <td className="py-1 text-center border-b border-gray-300 border-dashed">{it.quantity}</td>
-                      <td className="py-1 text-left border-b border-gray-300 border-dashed">{it.isFree ? 'مجاني' : it.sellPrice.toLocaleString()}</td>
+                      <td className="py-1.5 px-1 border-b border-gray-300 border-dashed truncate">{it.itemName}</td>
+                      <td className="py-1.5 px-1 text-center border-b border-gray-300 border-dashed">{it.quantity}</td>
+                      <td className="py-1.5 px-1 text-left border-b border-gray-300 border-dashed">{it.isFree ? 'مجاني' : it.sellPrice.toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
              </table>
          )}
 
-         {/* المجاميع */}
-         <div className="text-sm font-black space-y-1">
+         <div className="text-sm font-black space-y-1 px-1">
            {printData.subscriptionPrice > 0 && (
              <div className="flex justify-between text-xs font-bold">
                <span>الاشتراك / التركيب:</span>
@@ -1861,11 +1863,10 @@ export default function AdminScreen({ user, onLogout }) {
            </div>
          </div>
 
-         {/* تذييل الوصل */}
          <div className="text-center text-[9px] mt-6 pt-2 border-t border-dashed border-black">
            <p className="font-bold mb-1">شكراً لتعاملكم معنا!</p>
-           <p>الكراده قرب تقاطع الاورزدي</p>
-           <p>07713663013 - 07713836983</p>
+            <p>الكراده قرب تقاطع الاورزدي</p>
+          <p>07713663013 - 07713836983</p>
          </div>
       </div>
     )}
