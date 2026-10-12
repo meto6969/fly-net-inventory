@@ -671,7 +671,8 @@ export default function TechScreen({ user, onLogout }) {
 
          <div className="text-center text-[9px] mt-6 pt-2 border-t border-dashed border-black">
            <p className="font-bold mb-1">شكراً لتعاملكم معنا!</p>
-           <p>نظام Fly Teck لإدارة الشبكات</p>
+            <p>الكراده قرب تقاطع الاورزدي</p>
+          <p>07713663013 - 07713836983</p>
          </div>
       </div>
     )}
