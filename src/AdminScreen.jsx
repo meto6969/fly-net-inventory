@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabase';
-import { FiBox, FiTool, FiLayers, FiPlus, FiTrash2, FiMinus, FiCheckCircle, FiUser, FiDollarSign, FiCalendar, FiX, FiRefreshCw, FiEdit2, FiSave, FiList, FiShoppingCart, FiTrendingUp, FiLogOut, FiAlertCircle, FiSearch, FiPhone, FiPrinter } from 'react-icons/fi';
+import { FiBox, FiTool, FiLayers, FiPlus, FiTrash2, FiMinus, FiCheckCircle, FiUser, FiDollarSign, FiCalendar, FiX, FiRefreshCw, FiEdit2, FiSave, FiList, FiShoppingCart, FiTrendingUp, FiLogOut, FiAlertCircle, FiSearch, FiPhone, FiPrinter, FiDownload } from 'react-icons/fi';
+import { saveAs } from 'file-saver';
+import Papa from 'papaparse';
 
 let globalMainItems = null;
 let globalTechItems = null;
@@ -76,6 +78,7 @@ export default function AdminScreen({ user, onLogout }) {
   const [sellCustomerPhone, setSellCustomerPhone] = useState('');
   const [sellIsFree, setSellIsFree] = useState(false);
   const [sellCustomPrice, setSellCustomPrice] = useState('');
+  const [freeReason, setFreeReason] = useState('');
   const [isSelling, setIsSelling] = useState(false);
 
   const sellerOptions = ['حسن زهير', 'مصطفى', 'زينب', 'فاطمة'];
@@ -166,12 +169,15 @@ export default function AdminScreen({ user, onLogout }) {
           const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
           
           const amount = Number(entry.amount) || 0;
-          const isFreeCheck = amount === 0 && entry.note && entry.note.includes('(مجاني)');
+          const isFreeCheck = amount === 0 && entry.note && entry.note.includes('(مجاني');
           const isPaid = entry.is_paid !== false;
+          // 🌟 استثناء الاشتراكات من الدخول في القاصة
+          const isSubscription = entry.note && entry.note.includes('أجور اشتراك');
           
           if (!groupedFinance[dateStr]) groupedFinance[dateStr] = { date: dateStr, total: 0, ticketsTotal: 0, ticketsProfit: 0, freeCost: 0, freeCount: 0, unpaidTicketsTotal: 0, manualNotes: [] };
           
-          if (isPaid && !isFreeCheck) {
+          // 🌟 إضافة المبلغ للقاصة فقط إذا لم يكن اشتراكاً
+          if (isPaid && !isFreeCheck && !isSubscription) {
             groupedFinance[dateStr].total += amount;
           }
 
@@ -202,9 +208,6 @@ export default function AdminScreen({ user, onLogout }) {
               }
             }
           } 
-          else if (entry.note && entry.note.includes('أجور اشتراك')) {
-             itemProfit = 0;
-          }
 
           groupedFinance[dateStr].manualNotes.push({
             id: entry.id, 
@@ -213,7 +216,8 @@ export default function AdminScreen({ user, onLogout }) {
             profit: itemProfit,
             freeCost: itemFreeCost,
             isFree: isFree,
-            isPaid: isPaid
+            isPaid: isPaid,
+            isSubscription: isSubscription
           });
         });
       }
@@ -259,7 +263,14 @@ export default function AdminScreen({ user, onLogout }) {
       if (entry.note && (entry.note.includes('بيع مباشر (مواد)') || entry.note.includes('أجور اشتراك'))) {
         const parts = entry.note.split('|').map(p => p.trim());
         const buyerPart = parts.find(p => p.includes('المشتري:')) || '';
-        let buyerInfo = buyerPart.replace('المشتري:', '').replace(/\(مجاني\)/g, '').trim();
+        
+        let freeReasonText = '';
+        const reasonMatch = buyerPart.match(/\(مجاني - السبب: (.*?)\)/);
+        if (reasonMatch) {
+           freeReasonText = reasonMatch[1].trim();
+        }
+
+        let buyerInfo = buyerPart.replace('المشتري:', '').replace(/\(مجاني.*?\)/g, '').trim();
 
         const isSubscription = entry.note.includes('أجور اشتراك');
         const itemName = isSubscription ? 'أجور اشتراك / تركيب' : parts[0].replace('بيع مباشر (مواد):', '').trim();
@@ -268,7 +279,7 @@ export default function AdminScreen({ user, onLogout }) {
         const qty = isSubscription ? '-' : (Number(qtyStr.replace('العدد:', '').trim()) || 1);
         
         const sellPrice = Number(entry.amount) || 0;
-        const isFree = sellPrice === 0 && entry.note && entry.note.includes('(مجاني)');
+        const isFree = sellPrice === 0 && entry.note && entry.note.includes('(مجاني');
         
         let profit = 0;
         let freeCost = 0;
@@ -322,6 +333,7 @@ export default function AdminScreen({ user, onLogout }) {
           quantity: qty,
           sellPrice: sellPrice,
           isFree: isFree,
+          freeReason: freeReasonText,
           profit: profit,
           wholesaleCost: freeCost,
           profitKnown: profitKnown,
@@ -353,6 +365,7 @@ export default function AdminScreen({ user, onLogout }) {
           quantity: '-',
           sellPrice: matAmount,
           isFree: false,
+          freeReason: '',
           profit: 0,
           wholesaleCost: 0,
           profitKnown: false,
@@ -376,6 +389,7 @@ export default function AdminScreen({ user, onLogout }) {
             quantity: sale.quantity,
             sellPrice: sale.sellPrice,
             isFree: sale.isFree,
+            freeReason: sale.freeReason, 
             profit: sale.profit,
             wholesaleCost: sale.wholesaleCost,
             profitKnown: sale.profitKnown,
@@ -408,6 +422,7 @@ export default function AdminScreen({ user, onLogout }) {
               quantity: sale.quantity,
               sellPrice: sale.sellPrice,
               isFree: sale.isFree,
+              freeReason: sale.freeReason, 
               profit: sale.profit,
               wholesaleCost: sale.wholesaleCost,
               profitKnown: sale.profitKnown,
@@ -426,6 +441,7 @@ export default function AdminScreen({ user, onLogout }) {
             quantity: sale.quantity,
             sellPrice: sale.sellPrice,
             isFree: sale.isFree,
+            freeReason: sale.freeReason,
             profit: sale.profit,
             wholesaleCost: sale.wholesaleCost,
             profitKnown: sale.profitKnown,
@@ -481,6 +497,51 @@ export default function AdminScreen({ user, onLogout }) {
   const totalFreeCostAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && it.isFree ? (it.wholesaleCost || 0) : 0), 0), 0);
   const totalFreeQty = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (group.isPaid && it.isFree && !it.isSubscription ? (Number(it.quantity) || 0) : 0), 0), 0);
   const totalPendingAmount = filteredSalesList.reduce((sum, group) => sum + group.items.reduce((s, it) => s + (!group.isPaid && !it.isFree ? it.sellPrice : 0), 0), 0);
+
+  const exportToExcel = () => {
+    if (filteredSalesList.length === 0) {
+      alert('لا توجد بيانات لتصديرها!');
+      return;
+    }
+
+    const dataToExport = [];
+
+    filteredSalesList.forEach(sale => {
+      const allMaterialsFree = sale.items.filter(i => !i.isSubscription).every(i => i.isFree);
+      const hasMaterials = sale.items.some(i => !i.isSubscription);
+      
+      const itemNames = sale.items.filter(it => !it.isSubscription).map(it => {
+        let name = it.itemName;
+        if (it.isFree) {
+            name += ` (مجاني${it.freeReason ? ` - ${it.freeReason}` : ''})`;
+        }
+        return name;
+      }).join('، ') || '-';
+
+      const itemQuantities = sale.items.filter(it => !it.isSubscription).map(it => it.quantity).join('، ') || '-';
+
+      dataToExport.push({
+        'التاريخ والوقت': sale.displayDate,
+        'البائع': sale.seller,
+        'المشترك': sale.buyer,
+        'المواد المشتراة': itemNames,
+        'الكمية الإجمالية': itemQuantities,
+        'أجور الاشتراك (د.ع)': sale.subscriptionPrice || 0,
+        'مبلغ المواد (د.ع)': sale.materialsPrice || 0,
+        'حالة الاستلام': sale.isPaid ? 'مستلم' : 'غير مستلم',
+        'الربح الصافي للمواد (د.ع)': sale.profit || 0,
+        'تكلفة المجاني (خسارة) (د.ع)': (allMaterialsFree && hasMaterials) ? -sale.wholesaleCost : 0,
+        'تفاصيل الاستلام': sale.receiverInfo ? `استلم: ${sale.receiverInfo.split('(')[0]}` : '-'
+      });
+    });
+
+    const csvContent = Papa.unparse(dataToExport);
+    const bom = "\uFEFF"; 
+    const csvBlob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
+    
+    saveAs(csvBlob, `FlyTeck_Sales_Report_${getLocalTodayDate()}.csv`);
+    showMsg('✅ تم تصدير الملف بنجاح!');
+  };
 
   const togglePaymentStatus = async (sale) => {
     const newStatus = !sale.isPaid;
@@ -618,6 +679,7 @@ export default function AdminScreen({ user, onLogout }) {
     setSellCustomerPhone('');
     setSellCustomPrice(item.customerPrice);
     setSellIsFree(false);
+    setFreeReason('');
     setSelectedSeller('');
     setIsSellModalOpen(true);
   };
@@ -629,17 +691,24 @@ export default function AdminScreen({ user, onLogout }) {
     } else {
       setSellCustomPrice(sellItemData.customerPrice);
       setSellIsFree(false);
+      setFreeReason('');
     }
   };
 
   const handlePrintOnlyModal = () => {
+    if (sellIsFree && !freeReason.trim()) {
+      alert("يرجى ذكر سبب الصرف المجاني.");
+      return;
+    }
+
     const finalPrice = sellIsFree ? 0 : Number(sellCustomPrice);
     const invoiceNum = Math.floor(100000 + Math.random() * 900000);
+    const finalSeller = user?.username === 'shop' ? selectedSeller : (user?.name || 'المكتب');
     
     setPrintData({
       invoiceNumber: invoiceNum,
       displayDate: formatDate(new Date().toISOString()),
-      seller: selectedSeller || user?.name || 'المكتب',
+      seller: finalSeller,
       buyer: `${sellCustomerName || 'زبون'} - ${sellCustomerPhone || '-'}`,
       items: [{
         itemName: sellItemData.name,
@@ -664,8 +733,12 @@ export default function AdminScreen({ user, onLogout }) {
       alert("يرجى إدخال اسم المشترك ورقم هاتفه.");
       return;
     }
-    if (!selectedSeller) {
+    if (user?.username === 'shop' && !selectedSeller) {
       alert("يرجى اختيار اسم البائع من القائمة.");
+      return;
+    }
+    if (sellIsFree && !freeReason.trim()) {
+      alert("يرجى ذكر سبب الصرف المجاني.");
       return;
     }
 
@@ -673,8 +746,11 @@ export default function AdminScreen({ user, onLogout }) {
 
     const finalPrice = sellIsFree ? 0 : Number(sellCustomPrice);
     const totalPrice = finalPrice * sellQuantity;
-    const freeLabel = sellIsFree ? ' (مجاني)' : '';
-    const noteStr = `بيع مباشر (مواد): ${sellItemData.name} | العدد: ${sellQuantity} | المشتري: ${sellCustomerName} - ${sellCustomerPhone}${freeLabel} | البائع: ${selectedSeller} | المستلم: ${user?.name} (${getLocalTodayDate()})`;
+    const freeLabel = sellIsFree ? ` (مجاني - السبب: ${freeReason})` : '';
+    
+    const finalSeller = user?.username === 'shop' ? selectedSeller : (user?.name || 'المكتب');
+
+    const noteStr = `بيع مباشر (مواد): ${sellItemData.name} | العدد: ${sellQuantity} | المشتري: ${sellCustomerName} - ${sellCustomerPhone}${freeLabel} | البائع: ${finalSeller} | المستلم: ${user?.name} (${getLocalTodayDate()})`;
     const todayDate = getLocalTodayDate();
     const adminUsername = user?.username || 'المكتب (الإدارة)';
 
@@ -689,6 +765,7 @@ export default function AdminScreen({ user, onLogout }) {
     setIsSellModalOpen(false);
     setSellItemData(null);
     setSelectedSeller('');
+    setFreeReason('');
     showMsg('✅ تمت عملية البيع بنجاح وخصم المادة!');
 
     try {
@@ -915,13 +992,15 @@ export default function AdminScreen({ user, onLogout }) {
   if (financeEndDate) filteredFinance = filteredFinance.filter(record => new Date(record.date) <= new Date(financeEndDate));
   
   const totalFinanceSum = filteredFinance.reduce((sum, record) => sum + record.total, 0);
-  const totalDailyMaterialsSum = filteredFinance.reduce((sum, record) => sum + (record.ticketsTotal + (record.manualNotes.reduce((s, m) => s + ((m.amount > 0 && m.note && (m.note.includes('بيع مباشر') || m.note.includes('أجور اشتراك')) && m.isPaid) ? m.amount : 0), 0))), 0);
+  const totalDailyMaterialsSum = filteredFinance.reduce((sum, record) => sum + (record.ticketsTotal + (record.manualNotes.reduce((s, m) => s + ((m.amount > 0 && m.note && (m.note.includes('بيع مباشر') || m.note.includes('أجور اشتراك')) && m.isPaid && !m.isSubscription) ? m.amount : 0), 0))), 0);
   
   const totalDailyProfitSum = filteredFinance.reduce((sum, record) => sum + (record.ticketsProfit || 0), 0);
   const totalFreeItemsCost = filteredFinance.reduce((sum, record) => sum + (record.freeCost || 0), 0);
   const totalFreeItemsCount = filteredFinance.reduce((sum, record) => sum + (record.freeCount || 0), 0);
 
   const totalWithdrawalsSum = filteredFinance.reduce((sum, record) => sum + record.manualNotes.reduce((s, m) => s + (m.amount < 0 && !m.note.includes('سحب رصيد') ? Math.abs(m.amount) : 0), 0), 0);
+  
+  const totalAdditionsSum = filteredFinance.reduce((sum, record) => sum + record.manualNotes.reduce((s, m) => s + (m.amount > 0 && !m.note.includes('بيع مباشر') && !m.note.includes('أجور اشتراك') && !m.note.includes('زيادة رصيد') ? m.amount : 0), 0), 0);
 
   const totalInventoryCapital = mainItems.reduce((sum, item) => sum + ((Number(item.wholesalePrice) || 0) * (Number(item.quantity) || 0)), 0);
   const totalExpectedProfit = mainItems.reduce((sum, item) => {
@@ -931,7 +1010,6 @@ export default function AdminScreen({ user, onLogout }) {
 
   return (
     <>
-    {/* 🌟 كود الـ CSS المخصص لضبط حجم الورقة للطابعات الحرارية */}
     <style type="text/css">
       {`
         @media print {
@@ -1326,6 +1404,7 @@ export default function AdminScreen({ user, onLogout }) {
                           <th className="py-4 px-6 text-center text-blue-600 bg-blue-50/50">ربح الإيرادات اليومي</th>
                           <th className="py-4 px-6 text-center text-rose-600 bg-rose-50/50">عدد المجاني</th>
                           <th className="py-4 px-6 text-center text-rose-600 bg-rose-50/50">تكلفة المجاني (خسارة)</th>
+                          <th className="py-4 px-6 text-center text-emerald-600 bg-emerald-50/50">المبلغ المضاف</th>
                           <th className="py-4 px-6 text-center text-red-600 bg-red-50/50">المبلغ المسحوب</th>
                           <th className="py-4 px-6 text-center text-slate-500 bg-slate-50">تفاصيل السحب / الإضافة</th>
                           <th className="py-4 px-6 text-left">الرصيد النهائي للقاصة</th>
@@ -1333,14 +1412,17 @@ export default function AdminScreen({ user, onLogout }) {
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
                         {filteredFinance.length === 0 ? (
-                          <tr><td colSpan="8" className="py-12 text-center text-slate-400 font-medium">لا توجد مبالغ مسجلة.</td></tr>
+                          <tr><td colSpan="9" className="py-12 text-center text-slate-400 font-medium">لا توجد مبالغ مسجلة.</td></tr>
                         ) : (
                           filteredFinance.map((record, idx) => {
-                            const dailyMaterials = record.ticketsTotal + (record.manualNotes.reduce((s, m) => s + ((m.amount > 0 && m.note && (m.note.includes('بيع مباشر') || m.note.includes('أجور اشتراك')) && m.isPaid) ? m.amount : 0), 0));
+                            const dailyMaterials = record.ticketsTotal + (record.manualNotes.reduce((s, m) => s + ((m.amount > 0 && m.note && (m.note.includes('بيع مباشر') || m.note.includes('أجور اشتراك')) && m.isPaid && !m.isSubscription) ? m.amount : 0), 0));
                             
                             const dailyProfit = record.ticketsProfit || 0;
                             const dailyFreeCost = record.freeCost || 0;
                             const dailyFreeCount = record.freeCount || 0;
+                            
+                            const dailyAdditions = record.manualNotes.reduce((s, m) => s + (m.amount > 0 && !m.note.includes('بيع مباشر') && !m.note.includes('أجور اشتراك') && !m.note.includes('زيادة رصيد') ? m.amount : 0), 0);
+
                             const dailyWithdrawals = record.manualNotes.reduce((s, m) => s + (m.amount < 0 && !m.note.includes('سحب رصيد') ? Math.abs(m.amount) : 0), 0);
                             
                             const dailyOtherNotes = record.manualNotes.filter(m => !m.note.includes('بيع مباشر') && !m.note.includes('أجور اشتراك') && !m.note.includes('سحب رصيد') && !m.note.includes('زيادة رصيد')).map(m => m.amount > 0 ? `إضافة: ${m.note}` : `سحب: ${m.note}`).join(' ، ');
@@ -1354,6 +1436,9 @@ export default function AdminScreen({ user, onLogout }) {
                                 </td>
                                 <td className="py-4 px-6 text-center font-black text-rose-500 bg-rose-50/20">{dailyFreeCount > 0 ? dailyFreeCount : '-'}</td>
                                 <td className="py-4 px-6 text-center font-black text-rose-500 bg-rose-50/20">{dailyFreeCost > 0 ? `-${dailyFreeCost.toLocaleString()} د.ع` : '-'}</td>
+                                
+                                <td className="py-4 px-6 text-center font-black text-emerald-600 bg-emerald-50/20">{dailyAdditions > 0 ? `+${dailyAdditions.toLocaleString()} د.ع` : '-'}</td>
+
                                 <td className="py-4 px-6 text-center font-black text-red-500 bg-red-50/20">{dailyWithdrawals > 0 ? `-${dailyWithdrawals.toLocaleString()} د.ع` : '-'}</td>
                                 <td className="py-4 px-6 text-center text-xs text-slate-500 font-bold" title={dailyOtherNotes}>{dailyOtherNotes || '-'}</td>
                                 
@@ -1373,6 +1458,9 @@ export default function AdminScreen({ user, onLogout }) {
                             </td>
                             <td className="py-4 px-6 text-center text-rose-400">{totalFreeItemsCount > 0 ? totalFreeItemsCount : '-'}</td>
                             <td className="py-4 px-6 text-center text-rose-400">-{totalFreeItemsCost.toLocaleString()} د.ع</td>
+                            
+                            <td className="py-4 px-6 text-center text-emerald-400">{totalAdditionsSum > 0 ? `+${totalAdditionsSum.toLocaleString()} د.ع` : '-'}</td>
+
                             <td className="py-4 px-6 text-center text-red-400">{totalWithdrawalsSum > 0 ? `-${totalWithdrawalsSum.toLocaleString()} د.ع` : '-'}</td>
                             <td className="py-4 px-6 text-center text-slate-400">-</td>
 
@@ -1392,6 +1480,10 @@ export default function AdminScreen({ user, onLogout }) {
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-orange-50/30">
                   <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2"><FiShoppingCart className="text-orange-500"/> قائمة المبيعات والذمم الشاملة</h3>
                   <div className="flex items-center gap-3">
+                    <button onClick={exportToExcel} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md flex items-center gap-2 transition-all">
+                      <FiDownload /> تصدير إكسل
+                    </button>
+                    
                     <div className="bg-amber-100 text-amber-800 px-3 py-2 rounded-xl text-sm font-black border border-amber-200 shadow-sm flex items-center gap-2">
                       <FiAlertCircle /> ديون (مواد/اشتراكات): {totalPendingAmount.toLocaleString()} د.ع
                     </div>
@@ -1481,10 +1573,10 @@ export default function AdminScreen({ user, onLogout }) {
                                <td className="p-4">
                                  <div className="flex flex-col gap-1.5 mb-2">
                                    {sale.items.filter(it => !it.isSubscription).map((it, idx) => (
-                                     <div key={idx} className="font-bold text-sm text-slate-800 flex items-center gap-1.5">
+                                     <div key={idx} className="font-bold text-sm text-slate-800 flex items-center flex-wrap gap-1.5">
                                        <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span> 
                                        {it.itemName}
-                                       {it.isFree && <span className="text-[10px] bg-rose-100 text-rose-600 px-1.5 py-0.5 rounded font-black">مجاني</span>}
+                                       {it.isFree && <span className="text-[10px] bg-rose-100 text-rose-600 px-1.5 py-0.5 rounded font-black whitespace-nowrap">مجاني {it.freeReason ? `(${it.freeReason})` : ''}</span>}
                                      </div>
                                    ))}
                                  </div>
@@ -1608,15 +1700,17 @@ export default function AdminScreen({ user, onLogout }) {
                     <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiPhone/> رقم الهاتف (إجباري)</label>
                     <input type="tel" required value={sellCustomerPhone} onChange={(e) => setSellCustomerPhone(e.target.value)} placeholder="07XX XXX XXXX" dir="ltr" className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 focus:ring-2 focus:ring-emerald-100 outline-none text-right" />
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiUser/> اسم الموظف البائع</label>
-                    <select value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 focus:ring-2 focus:ring-emerald-100 outline-none text-sm font-bold text-slate-700">
-                      <option value="">اختر البائع...</option>
-                      {sellerOptions.map(seller => (
-                        <option key={seller} value={seller}>{seller}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {user?.username === 'shop' && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1 flex items-center gap-1"><FiUser/> اسم الموظف البائع</label>
+                      <select value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 focus:ring-2 focus:ring-emerald-100 outline-none text-sm font-bold text-slate-700">
+                        <option value="">اختر البائع...</option>
+                        {sellerOptions.map(seller => (
+                          <option key={seller} value={seller}>{seller}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
                 
                 <div className="grid grid-cols-2 gap-3">
@@ -1636,7 +1730,7 @@ export default function AdminScreen({ user, onLogout }) {
                       required 
                       disabled={sellIsFree}
                       value={sellCustomPrice} 
-                      onChange={(e) => setSellCustomPrice(e.target.value)} 
+                      onChange={(e) => setCustomPrice(e.target.value)} 
                       className={`w-full border rounded-xl py-2 px-3 outline-none font-bold transition-colors h-[44px] ${sellIsFree ? 'bg-slate-100 border-slate-200 text-slate-400' : 'bg-white border-emerald-200 text-emerald-700 focus:ring-2 focus:ring-emerald-100'}`} 
                     />
                   </div>
@@ -1647,6 +1741,20 @@ export default function AdminScreen({ user, onLogout }) {
                     {sellIsFree ? 'إلغاء المجاني' : 'صرف مجاني'}
                   </button>
                 </div>
+
+                {sellIsFree && (
+                  <div className="mt-3 animate-fade-in">
+                    <label className="block text-xs font-bold text-rose-600 mb-1">سبب الصرف المجاني (إجباري)</label>
+                    <input 
+                      type="text" 
+                      required 
+                      value={freeReason} 
+                      onChange={(e) => setFreeReason(e.target.value)} 
+                      placeholder="مثال: تعويض جهاز تالف، صيانة دورية..." 
+                      className="w-full bg-rose-50 border border-rose-200 rounded-xl py-2.5 px-3 focus:ring-2 focus:ring-rose-200 outline-none text-rose-800 font-bold" 
+                    />
+                  </div>
+                )}
 
                 <div className="bg-emerald-50 text-emerald-800 p-4 rounded-xl flex justify-between items-center border border-emerald-100 mt-2">
                   <span className="font-bold">الإجمالي المطلوب:</span>
@@ -1812,7 +1920,6 @@ export default function AdminScreen({ user, onLogout }) {
 
     </div>
 
-    {/* 🌟 واجهة طباعة الوصل المخصصة لطابعات 80mm مع Padding يحمي النصوص */}
     {printData && (
       <div className="hidden print:block w-[76mm] bg-white text-black font-sans mx-auto text-xs leading-tight px-4 py-2" dir="rtl">
          <div className="text-center mb-3">
@@ -1865,8 +1972,7 @@ export default function AdminScreen({ user, onLogout }) {
 
          <div className="text-center text-[9px] mt-6 pt-2 border-t border-dashed border-black">
            <p className="font-bold mb-1">شكراً لتعاملكم معنا!</p>
-            <p>الكراده قرب تقاطع الاورزدي</p>
-          <p>07713663013 - 07713836983</p>
+           <p>نظام Fly Teck لإدارة الشبكات</p>
          </div>
       </div>
     )}

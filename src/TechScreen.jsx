@@ -18,7 +18,6 @@ const formatDate = (dateString) => {
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 
-// تهيئة قاعدة البيانات المحلية للأوفلاين
 const initDB = async () => {
   return openDB('flyteck-offline-db', 1, {
     upgrade(db) {
@@ -38,25 +37,23 @@ export default function TechScreen({ user, onLogout }) {
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // حالات نافذة الصرف (السلة)
   const [isDispenseModalOpen, setIsDispenseModalOpen] = useState(false);
   const [dispenseCustomerName, setDispenseCustomerName] = useState('');
   const [dispenseCustomerPhone, setDispenseCustomerPhone] = useState('');
   const [subscriptionFee, setSubscriptionFee] = useState(''); 
   
-  // قائمة البائعين
   const sellerOptions = ['حسن زهير', 'مصطفى', 'زينب', 'فاطمة'];
   const [selectedSeller, setSelectedSeller] = useState('');
 
-  // حالات إضافة مادة واحدة للسلة
   const [cart, setCart] = useState([]);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [selectedQty, setSelectedQty] = useState(1);
   const [customPrice, setCustomPrice] = useState('');
   const [isFree, setIsFree] = useState(false);
+  // 🌟 حقل تخزين سبب المجاني للفني
+  const [freeReason, setFreeReason] = useState('');
   const [isDispensing, setIsDispensing] = useState(false);
 
-  // حالة بيانات الطباعة
   const [printData, setPrintData] = useState(null);
 
   const showMsg = (text) => {
@@ -92,7 +89,6 @@ export default function TechScreen({ user, onLogout }) {
     try {
       const [techRes, mainRes] = await Promise.all([
         supabase.from('inventory_techs').select('*').eq('techUsername', user.username),
-        // 🌟 التعديل هنا: جلب سعر الفني وسعر المكتب
         supabase.from('inventory_main').select('id, customerPrice, techPrice')
       ]);
       if (techRes.error) throw techRes.error;
@@ -102,10 +98,9 @@ export default function TechScreen({ user, onLogout }) {
       
       const combinedData = techData.map(tItem => {
         const mItem = mainData.find(m => String(m.id) === String(tItem.itemId));
-        // 🌟 التعديل السحري: تحديد السعر المناسب بناءً على اسم المستخدم
         const appropriatePrice = user?.username === 'shop' 
-          ? (mItem ? mItem.customerPrice : 0) // للشوب: سعر المكتب
-          : (mItem ? mItem.techPrice : 0);    // للفنيين: سعر الفني
+          ? (mItem ? mItem.customerPrice : 0) 
+          : (mItem ? mItem.techPrice : 0);    
           
         return { ...tItem, displayPrice: appropriatePrice };
       });
@@ -190,7 +185,6 @@ export default function TechScreen({ user, onLogout }) {
     setSelectedItemId(id);
     const item = techInventory.find(i => String(i.itemId) === String(id));
     if (item) {
-      // 🌟 استخدام السعر الذي تم تحديده مسبقاً بناءً على نوع المستخدم
       setCustomPrice(item.displayPrice);
     } else {
       setCustomPrice('');
@@ -200,6 +194,12 @@ export default function TechScreen({ user, onLogout }) {
   const handleAddToCart = (e) => {
     e.preventDefault();
     if (!selectedItemId || selectedQty < 1) return;
+    
+    // 🌟 إجبار الفني على إدخال سبب المجاني قبل إضافته للسلة
+    if (isFree && !freeReason.trim()) {
+      alert("يرجى ذكر سبب الصرف المجاني قبل الإدراج بالسلة.");
+      return;
+    }
 
     const item = techInventory.find(i => String(i.itemId) === String(selectedItemId));
     if (!item) return;
@@ -215,7 +215,7 @@ export default function TechScreen({ user, onLogout }) {
     const priceToUse = isFree ? 0 : Number(customPrice);
 
     if (existingCartItem) {
-      setCart(cart.map(c => String(c.itemId) === String(selectedItemId) ? { ...c, qty: c.qty + Number(selectedQty), price: priceToUse, isFree: isFree } : c));
+      setCart(cart.map(c => String(c.itemId) === String(selectedItemId) ? { ...c, qty: c.qty + Number(selectedQty), price: priceToUse, isFree: isFree, freeReason: freeReason } : c));
     } else {
       setCart([...cart, { 
         techItemId: item.id, 
@@ -223,7 +223,8 @@ export default function TechScreen({ user, onLogout }) {
         itemName: item.itemName, 
         qty: Number(selectedQty), 
         price: priceToUse, 
-        isFree: isFree 
+        isFree: isFree,
+        freeReason: freeReason // 🌟 حفظ السبب في السلة
       }]);
     }
 
@@ -231,6 +232,7 @@ export default function TechScreen({ user, onLogout }) {
     setSelectedQty(1);
     setCustomPrice('');
     setIsFree(false);
+    setFreeReason(''); // 🌟 تصفير السبب بعد إضافته للسلة
   };
 
   const handleRemoveFromCart = (itemId) => {
@@ -315,7 +317,8 @@ export default function TechScreen({ user, onLogout }) {
 
       for (const cartItem of cart) {
         const totalPrice = cartItem.price * cartItem.qty;
-        const freeLabel = cartItem.isFree ? ' (مجاني)' : '';
+        // 🌟 إضافة السبب للملاحظة التي تذهب للإدارة
+        const freeLabel = cartItem.isFree ? ` (مجاني - السبب: ${cartItem.freeReason})` : '';
         const noteStr = `بيع مباشر (مواد): ${cartItem.itemName} | العدد: ${cartItem.qty} | المشتري: ${dispenseCustomerName} - ${dispenseCustomerPhone}${freeLabel} | البائع: ${finalSeller}`;
 
         if (currentOfflineStatus) {
@@ -353,6 +356,7 @@ export default function TechScreen({ user, onLogout }) {
       setDispenseCustomerPhone('');
       setSubscriptionFee('');
       setSelectedSeller('');
+      setFreeReason('');
       if (!currentOfflineStatus) fetchData();
 
     } catch (err) {
@@ -469,7 +473,7 @@ export default function TechScreen({ user, onLogout }) {
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col animate-fade-in relative max-h-[95vh]">
             <div className="bg-slate-900 p-5 flex justify-between items-center text-white shrink-0">
               <h2 className="text-lg font-bold flex items-center gap-2"><FiShoppingCart className="text-blue-400"/> فاتورة مشتريات (مواد / اشتراكات)</h2>
-              <button onClick={() => { setIsDispenseModalOpen(false); setCart([]); setDispenseCustomerName(''); setDispenseCustomerPhone(''); setSubscriptionFee(''); setSelectedSeller(''); }} className="p-2 bg-slate-800 hover:bg-red-500 rounded-full transition-colors"><FiX /></button>
+              <button onClick={() => { setIsDispenseModalOpen(false); setCart([]); setDispenseCustomerName(''); setDispenseCustomerPhone(''); setSubscriptionFee(''); setSelectedSeller(''); setFreeReason(''); }} className="p-2 bg-slate-800 hover:bg-red-500 rounded-full transition-colors"><FiX /></button>
             </div>
             
             <div className="p-6 overflow-y-auto custom-scrollbar">
@@ -544,9 +548,23 @@ export default function TechScreen({ user, onLogout }) {
                   </div>
                 </div>
 
+                {/* 🌟 إضافة حقل إدخال سبب المجاني للفنيين */}
+                {isFree && (
+                  <div className="mt-1 animate-fade-in">
+                    <label className="block text-xs font-bold text-rose-600 mb-1">سبب الصرف المجاني (إجباري)</label>
+                    <input 
+                      type="text" 
+                      value={freeReason} 
+                      onChange={(e) => setFreeReason(e.target.value)} 
+                      placeholder="مثال: تعويض جهاز تالف، صيانة..." 
+                      className="w-full border border-rose-200 bg-rose-50 rounded-xl py-2 px-3 outline-none focus:ring-2 focus:ring-rose-200 text-sm text-rose-800 font-bold" 
+                    />
+                  </div>
+                )}
+
                 <div className="flex justify-between items-center pt-2">
-                  <button type="button" onClick={() => setIsFree(!isFree)} disabled={!selectedItemId} className={`px-4 py-2 rounded-xl text-xs font-bold border transition-colors ${isFree ? 'bg-orange-50 text-orange-600 border-orange-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100'} disabled:opacity-50`}>
-                    {isFree ? 'إلغاء المجاني' : 'صرف مجاني (بدون أجور)'}
+                  <button type="button" onClick={() => { setIsFree(!isFree); setFreeReason(''); }} disabled={!selectedItemId} className={`px-4 py-2 rounded-xl text-xs font-bold border transition-colors ${isFree ? 'bg-orange-50 text-orange-600 border-orange-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100'} disabled:opacity-50`}>
+                    {isFree ? 'إلغاء المجاني' : 'صرف مجاني'}
                   </button>
                   <button type="button" onClick={handleAddToCart} disabled={!selectedItemId} className="bg-slate-800 hover:bg-black text-white px-5 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors disabled:opacity-50">
                     <FiPlus size={16}/> إدراج بالسلة
@@ -563,7 +581,8 @@ export default function TechScreen({ user, onLogout }) {
                         <div className="flex flex-col">
                           <span className="font-bold text-sm text-slate-800">{c.itemName}</span>
                           <span className="text-[10px] text-slate-500 font-bold">
-                            {c.isFree ? <span className="text-rose-500">مجاني</span> : `${Number(c.price).toLocaleString()} د.ع للمفرد`}
+                            {/* 🌟 عرض سبب المجاني في السلة */}
+                            {c.isFree ? <span className="text-rose-500">مجاني ({c.freeReason})</span> : `${Number(c.price).toLocaleString()} د.ع للمفرد`}
                           </span>
                         </div>
                         <div className="flex items-center gap-3">
